@@ -11,6 +11,7 @@ import sys
 from typing import Any
 
 from Frontend.Input_Module import UserInputModule
+from Frontend.Request_Module import RequestSendingModule
 from Frontend.qt_compat import (
     QApplication,
     ECHO_PASSWORD,
@@ -22,6 +23,7 @@ from Frontend.qt_compat import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTabWidget,
@@ -200,10 +202,14 @@ class SmartLearningWindow(QMainWindow):
         self,
         academic_info: dict[str, Any] | None = None,
         input_module: UserInputModule | None = None,
+        request_module: RequestSendingModule | None = None,
     ) -> None:
         super().__init__()
         self.academic_info = academic_info or MOCK_ACADEMIC_INFO
-        self.input_module = input_module or UserInputModule(self)
+        self.request_module = request_module or RequestSendingModule(self)
+        self.input_module = input_module or UserInputModule(self, request_module=self.request_module)
+        if input_module is not None:
+            self.request_module = input_module.request_module
 
         self.setWindowTitle("Smart Learning")
         self.setMinimumSize(980, 680)
@@ -212,7 +218,7 @@ class SmartLearningWindow(QMainWindow):
         self._build_ui()
         self._connect_signal_board()
         self.render_academic_info(self.academic_info)
-        self.set_status("Ready - showing mock academic information.")
+        self.input_module.emit_initial_state()
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -357,6 +363,7 @@ class SmartLearningWindow(QMainWindow):
         title_area.addWidget(self.subtitle_label)
 
         self.settings_button = QPushButton("Settings")
+        self.settings_button.hide()
         self.logout_button = QPushButton("Log out")
 
         layout.addLayout(title_area, stretch=1)
@@ -495,6 +502,10 @@ class SmartLearningWindow(QMainWindow):
         self.settings_button.clicked.connect(self.input_module.request_settings)
         self.logout_button.clicked.connect(self.input_module.request_logout)
         self.login_button.clicked.connect(self._send_login_input)
+        self.input_module.content_access_changed.connect(self._set_content_access)
+        self.input_module.validation_failed.connect(self.show_message)
+        self.input_module.status_changed.connect(self.set_status)
+        self.request_module.request_queued.connect(self.set_status)
 
     def _send_login_input(self) -> None:
         self.input_module.request_login(
@@ -521,6 +532,20 @@ class SmartLearningWindow(QMainWindow):
 
     def set_error(self, message: str | None) -> None:
         self.error_label.setText(message or "No errors")
+
+    def show_message(self, message: str) -> None:
+        QMessageBox.information(self, "Smart Learning", message)
+
+    def _set_content_access(self, can_view_content: bool) -> None:
+        self.tabs.setTabEnabled(1, True)
+        self.tabs.setTabEnabled(2, True)
+        self.logout_button.setEnabled(can_view_content)
+        self.refresh_button.setEnabled(True)
+        self.login_button.setEnabled(not can_view_content)
+
+        if can_view_content:
+            self.tabs.setCurrentIndex(1)
+            self.set_error(None)
 
     def _render_profile(self, data: dict[str, Any]) -> None:
         fields = [
