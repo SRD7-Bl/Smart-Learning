@@ -13,6 +13,7 @@ from typing import Any
 from Backend.Data_Access import DataAccessModule
 from Frontend.Input_Module import UserInputModule
 from Frontend.Request_Module import RequestSendingModule
+from Frontend.Status_Error_Display import StatusErrorDisplayModule
 from Frontend.qt_compat import (
     QApplication,
     ECHO_PASSWORD,
@@ -205,6 +206,7 @@ class SmartLearningWindow(QMainWindow):
         input_module: UserInputModule | None = None,
         request_module: RequestSendingModule | None = None,
         data_access_module: DataAccessModule | None = None,
+        status_error_display: StatusErrorDisplayModule | None = None,
     ) -> None:
         super().__init__()
         self.academic_info = academic_info or MOCK_ACADEMIC_INFO
@@ -213,6 +215,8 @@ class SmartLearningWindow(QMainWindow):
         if input_module is not None:
             self.request_module = input_module.request_module
         self.data_access_module = data_access_module or DataAccessModule(self)
+        self.status_error_display = status_error_display or StatusErrorDisplayModule(self, self)
+        self.status_error_display.set_dialog_parent(self)
 
         self.setWindowTitle("Smart Learning")
         self.setMinimumSize(980, 680)
@@ -502,16 +506,17 @@ class SmartLearningWindow(QMainWindow):
         self.login_button.clicked.connect(self._send_login_input)
         self.test_data_access_button.clicked.connect(self.data_access_module.request_all_data)
         self.input_module.content_access_changed.connect(self._set_content_access)
-        self.input_module.validation_failed.connect(self.show_message)
-        self.input_module.status_changed.connect(self.set_status)
-        self.request_module.request_queued.connect(self.set_status)
-        self.request_module.request_failed.connect(self.show_message)
+        self.input_module.validation_failed.connect(self.status_error_display.display_error)
+        self.input_module.status_changed.connect(self.status_error_display.display_status)
+        self.request_module.request_queued.connect(self.status_error_display.display_status)
+        self.request_module.request_failed.connect(self.status_error_display.display_error)
         self.request_module.login_succeeded.connect(self._handle_login_succeeded)
         self.request_module.refresh_succeeded.connect(self.render_academic_info)
         self.input_module.logout_requested.connect(self._clear_login_inputs)
         self.data_access_module.all_data_loaded.connect(self._show_data_access_result)
         self.data_access_module.academic_info_loaded.connect(self.render_academic_info)
-        self.data_access_module.data_access_failed.connect(self.show_message)
+        self.data_access_module.data_access_failed.connect(self.status_error_display.display_error)
+        self.status_error_display.status_ready.connect(self.set_status)
 
     def _send_login_input(self) -> None:
         self.input_module.request_login(

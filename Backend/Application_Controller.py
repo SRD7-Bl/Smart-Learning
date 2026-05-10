@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from Backend.Authentication import AuthenticationModule
 from Backend.Data_Access import DataAccessModule
+from Backend.Error_Handler import ErrorHandlingModule
 from Backend.Processer import DataProcessingModule
 from Frontend.qt_compat import QObject, pyqtSignal
 
@@ -23,11 +24,13 @@ class ApplicationController(QObject):
         data_access_module: DataAccessModule | None = None,
         authentication_module: AuthenticationModule | None = None,
         processor_module: DataProcessingModule | None = None,
+        error_handler: ErrorHandlingModule | None = None,
     ) -> None:
         super().__init__(parent)
         self.data_access_module = data_access_module or DataAccessModule(self)
         self.authentication_module = authentication_module or AuthenticationModule(self)
         self.processor_module = processor_module or DataProcessingModule(self)
+        self.error_handler = error_handler or ErrorHandlingModule(self)
         self._pending_login_credentials: tuple[str, str] | None = None
         self._connect_modules()
 
@@ -35,9 +38,10 @@ class ApplicationController(QObject):
         self.data_access_module.user_settings_loaded.connect(self._check_login_against_settings)
         self.data_access_module.data_access_failed.connect(self._handle_data_access_failure)
         self.authentication_module.authentication_succeeded.connect(self._run_refresh_pipeline)
-        self.authentication_module.authentication_failed.connect(self.refresh_failed.emit)
+        self.authentication_module.authentication_failed.connect(self.error_handler.handle_authentication_error)
         self.processor_module.processing_succeeded.connect(self._finish_refresh)
-        self.processor_module.processing_failed.connect(self.refresh_failed.emit)
+        self.processor_module.processing_failed.connect(self.error_handler.handle_pipeline_error)
+        self.error_handler.error_ready.connect(self._handle_backend_error)
 
     def handle_login_request(self, student_id: str, password: str) -> None:
         self._pending_login_credentials = (student_id, password)
@@ -74,6 +78,9 @@ class ApplicationController(QObject):
         self.controller_status.emit("Refresh pipeline completed.")
 
     def _handle_data_access_failure(self, message: str) -> None:
+        self.error_handler.handle_data_access_error(message)
+
+    def _handle_backend_error(self, message: str) -> None:
         if self._pending_login_credentials is not None:
             self._pending_login_credentials = None
             self.login_failed.emit(message)
