@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 from typing import Any
 
+from Backend.Data_Access import DataAccessModule
 from Frontend.Input_Module import UserInputModule
 from Frontend.Request_Module import RequestSendingModule
 from Frontend.qt_compat import (
@@ -203,6 +204,7 @@ class SmartLearningWindow(QMainWindow):
         academic_info: dict[str, Any] | None = None,
         input_module: UserInputModule | None = None,
         request_module: RequestSendingModule | None = None,
+        data_access_module: DataAccessModule | None = None,
     ) -> None:
         super().__init__()
         self.academic_info = academic_info or MOCK_ACADEMIC_INFO
@@ -210,6 +212,7 @@ class SmartLearningWindow(QMainWindow):
         self.input_module = input_module or UserInputModule(self, request_module=self.request_module)
         if input_module is not None:
             self.request_module = input_module.request_module
+        self.data_access_module = data_access_module or DataAccessModule(self)
 
         self.setWindowTitle("Smart Learning")
         self.setMinimumSize(980, 680)
@@ -387,6 +390,7 @@ class SmartLearningWindow(QMainWindow):
         self.login_button = QPushButton("Login")
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.setObjectName("primaryButton")
+        self.test_data_access_button = QPushButton("Test Data Access")
 
         layout.addWidget(QLabel("Student ID"), 0, 0)
         layout.addWidget(self.student_id_input, 0, 1)
@@ -394,6 +398,7 @@ class SmartLearningWindow(QMainWindow):
         layout.addWidget(self.password_input, 0, 3)
         layout.addWidget(self.login_button, 0, 4)
         layout.addWidget(self.refresh_button, 0, 5)
+        layout.addWidget(self.test_data_access_button, 1, 4, 1, 2)
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(3, 1)
         return panel
@@ -502,10 +507,13 @@ class SmartLearningWindow(QMainWindow):
         self.settings_button.clicked.connect(self.input_module.request_settings)
         self.logout_button.clicked.connect(self.input_module.request_logout)
         self.login_button.clicked.connect(self._send_login_input)
+        self.test_data_access_button.clicked.connect(self.data_access_module.request_all_data)
         self.input_module.content_access_changed.connect(self._set_content_access)
         self.input_module.validation_failed.connect(self.show_message)
         self.input_module.status_changed.connect(self.set_status)
         self.request_module.request_queued.connect(self.set_status)
+        self.data_access_module.all_data_loaded.connect(self._show_data_access_result)
+        self.data_access_module.data_access_failed.connect(self.show_message)
 
     def _send_login_input(self) -> None:
         self.input_module.request_login(
@@ -535,6 +543,20 @@ class SmartLearningWindow(QMainWindow):
 
     def show_message(self, message: str) -> None:
         QMessageBox.information(self, "Smart Learning", message)
+
+    def _show_data_access_result(self, user_settings: dict[str, Any], academic_info: dict[str, Any]) -> None:
+        student = user_settings.get("student", {})
+        courses = academic_info.get("courses", [])
+        schedule_days = academic_info.get("schedule_days", [])
+        message = (
+            "Data Access Module loaded local data.\n\n"
+            f"Student: {student.get('display_name', 'Unknown')}\n"
+            f"Student ID: {student.get('student_id', 'Unknown')}\n"
+            f"Auto login: {user_settings.get('auto_login', False)}\n"
+            f"Courses loaded: {len(courses)}\n"
+            f"Schedule days loaded: {len(schedule_days)}"
+        )
+        QMessageBox.information(self, "Data Access Test", message)
 
     def _set_content_access(self, can_view_content: bool) -> None:
         self.tabs.setTabEnabled(1, True)
