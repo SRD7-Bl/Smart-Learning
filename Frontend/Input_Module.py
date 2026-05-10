@@ -44,6 +44,8 @@ class UserInputModule(QObject):
     def _connect_request_module(self) -> None:
         self.login_request_accepted.connect(self.request_module.send_login_request)
         self.refresh_request_accepted.connect(self.request_module.send_refresh_request)
+        self.request_module.login_succeeded.connect(self._handle_login_success)
+        self.request_module.login_failed.connect(self._handle_login_failure)
 
     def request_login(self, student_id: str, password: str) -> None:
         student_id = student_id.strip()
@@ -55,13 +57,8 @@ class UserInputModule(QObject):
             self.validation_failed.emit("Password is required before login.")
             return
 
-        self.is_logged_in = True
-        self.auto_login_enabled = True
-        self._write_auto_login(True)
-        self.content_access_changed.emit(True)
-        self.auto_login_changed.emit(True)
         self.login_request_accepted.emit(student_id, password)
-        self.status_changed.emit("Login accepted. Auto login is enabled.")
+        self.status_changed.emit("Login request accepted. Waiting for backend check.")
 
     def request_settings(self) -> None:
         self.settings_requested.emit()
@@ -82,6 +79,23 @@ class UserInputModule(QObject):
 
         self.refresh_request_accepted.emit()
         self.status_changed.emit("Refresh request accepted.")
+
+    def _handle_login_success(self, user_settings: dict) -> None:
+        self.is_logged_in = True
+        self.auto_login_enabled = True
+        self._write_auto_login(True)
+        self.content_access_changed.emit(True)
+        self.auto_login_changed.emit(True)
+        display_name = user_settings.get("student", {}).get("display_name", "student")
+        self.status_changed.emit(f"Login succeeded for {display_name}. Auto login is enabled.")
+
+    def _handle_login_failure(self, message: str) -> None:
+        self.is_logged_in = False
+        self.auto_login_enabled = False
+        self._write_auto_login(False)
+        self.content_access_changed.emit(False)
+        self.auto_login_changed.emit(False)
+        self.status_changed.emit(message)
 
     def _bootstrap_login_state(self) -> None:
         settings = self._read_settings()

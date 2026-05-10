@@ -221,6 +221,7 @@ class SmartLearningWindow(QMainWindow):
         self._build_ui()
         self._connect_signal_board()
         self.render_academic_info(self.academic_info)
+        self.data_access_module.request_academic_info()
         self.input_module.emit_initial_state()
 
     def _build_ui(self) -> None:
@@ -303,7 +304,7 @@ class SmartLearningWindow(QMainWindow):
                 min-width: 150px;
                 padding: 10px 16px;
             }
-            QFrame#courseCard, QFrame#summaryTile, QFrame#noticeCard {
+            QFrame#courseCard {
                 background: #ffffff;
                 border: 1px solid #d7dce3;
                 border-radius: 8px;
@@ -426,16 +427,8 @@ class SmartLearningWindow(QMainWindow):
         self.profile_group = QGroupBox("Student Overview")
         self.profile_layout = QGridLayout(self.profile_group)
 
-        self.summary_group = QGroupBox("Academic Summary")
-        self.summary_layout = QHBoxLayout(self.summary_group)
-        self.summary_layout.setSpacing(14)
-
-        self.notice_group = QGroupBox("Notices")
-        self.notice_layout = QVBoxLayout(self.notice_group)
-
         layout.addWidget(self.profile_group)
-        layout.addWidget(self.summary_group)
-        layout.addWidget(self.notice_group, stretch=1)
+        layout.addStretch(1)
         return tab
 
     def _build_schedule_tab(self) -> QWidget:
@@ -512,7 +505,12 @@ class SmartLearningWindow(QMainWindow):
         self.input_module.validation_failed.connect(self.show_message)
         self.input_module.status_changed.connect(self.set_status)
         self.request_module.request_queued.connect(self.set_status)
+        self.request_module.request_failed.connect(self.show_message)
+        self.request_module.login_succeeded.connect(self._handle_login_succeeded)
+        self.request_module.refresh_succeeded.connect(self.render_academic_info)
+        self.input_module.logout_requested.connect(self._clear_login_inputs)
         self.data_access_module.all_data_loaded.connect(self._show_data_access_result)
+        self.data_access_module.academic_info_loaded.connect(self.render_academic_info)
         self.data_access_module.data_access_failed.connect(self.show_message)
 
     def _send_login_input(self) -> None:
@@ -520,20 +518,17 @@ class SmartLearningWindow(QMainWindow):
             self.student_id_input.text().strip(),
             self.password_input.text(),
         )
+        self._clear_login_inputs()
 
     def render_academic_info(self, data: dict[str, Any]) -> None:
         self._clear_layout(self.profile_layout)
-        self._clear_layout(self.summary_layout)
         self._clear_layout(self.schedule_list_layout)
         self._clear_layout(self.course_selector_layout)
         self._clear_layout(self.course_detail_layout)
-        self._clear_layout(self.notice_layout)
 
         self._render_profile(data)
-        self._render_summary(data.get("summary", {}))
         self._render_schedule(data.get("schedule_days", data.get("schedule", [])))
         self._render_courses(data.get("courses", []))
-        self._render_notices(data.get("notices", []))
 
     def set_status(self, message: str) -> None:
         self.status_label.setText(message)
@@ -558,16 +553,34 @@ class SmartLearningWindow(QMainWindow):
         )
         QMessageBox.information(self, "Data Access Test", message)
 
+    def _handle_login_succeeded(self, user_settings: dict[str, Any]) -> None:
+        self._clear_login_inputs()
+        self._clear_layout(self.profile_layout)
+        self._render_profile(
+            {
+                "student_name": user_settings.get("student", {}).get("display_name", "Unknown"),
+                "student_id": user_settings.get("student", {}).get("student_id", "Unknown"),
+                "last_updated": user_settings.get("last_successful_refresh", "Never"),
+            }
+        )
+
+    def _clear_login_inputs(self) -> None:
+        self.student_id_input.clear()
+        self.password_input.clear()
+
     def _set_content_access(self, can_view_content: bool) -> None:
-        self.tabs.setTabEnabled(1, True)
-        self.tabs.setTabEnabled(2, True)
+        self.tabs.setTabEnabled(1, can_view_content)
+        self.tabs.setTabEnabled(2, can_view_content)
         self.logout_button.setEnabled(can_view_content)
-        self.refresh_button.setEnabled(True)
+        self.refresh_button.setEnabled(can_view_content)
         self.login_button.setEnabled(not can_view_content)
 
         if can_view_content:
             self.tabs.setCurrentIndex(1)
             self.set_error(None)
+            return
+
+        self.tabs.setCurrentIndex(0)
 
     def _render_profile(self, data: dict[str, Any]) -> None:
         fields = [
@@ -583,32 +596,6 @@ class SmartLearningWindow(QMainWindow):
             self.profile_layout.addWidget(label_widget, 0, column)
             self.profile_layout.addWidget(value_widget, 1, column)
             self.profile_layout.setColumnStretch(column, 1)
-
-    def _render_summary(self, summary: dict[str, Any]) -> None:
-        tiles = [
-            ("Courses", summary.get("courses", 0)),
-            ("Assignments Due", summary.get("assignments_due", 0)),
-            ("Notices", summary.get("notices", 0)),
-        ]
-        self.summary_layout.addStretch(1)
-        for title, value in tiles:
-            self.summary_layout.addWidget(self._summary_tile(title, value), stretch=1)
-        self.summary_layout.addStretch(1)
-
-    def _summary_tile(self, title: str, value: Any) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("summaryTile")
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(14, 12, 14, 12)
-
-        value_label = QLabel(str(value))
-        value_label.setObjectName("sectionTitle")
-        title_label = QLabel(title)
-        title_label.setObjectName("mutedText")
-
-        layout.addWidget(value_label)
-        layout.addWidget(title_label)
-        return frame
 
     def _render_courses(self, courses: list[dict[str, Any]]) -> None:
         if not courses:
@@ -758,21 +745,6 @@ class SmartLearningWindow(QMainWindow):
         layout.addWidget(detail, 2, 1, 1, 2)
         layout.setColumnStretch(1, 1)
         return frame
-
-    def _render_notices(self, notices: list[str]) -> None:
-        if not notices:
-            self.notice_layout.addWidget(QLabel("No notices available."))
-            return
-
-        for notice in notices:
-            card = QFrame()
-            card.setObjectName("noticeCard")
-            card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(12, 10, 12, 10)
-            text = QLabel(notice)
-            text.setWordWrap(True)
-            card_layout.addWidget(text)
-            self.notice_layout.addWidget(card)
 
     def _clear_layout(self, layout: QVBoxLayout | QHBoxLayout | QGridLayout) -> None:
         while layout.count():
