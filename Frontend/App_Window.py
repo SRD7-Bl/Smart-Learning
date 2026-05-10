@@ -111,35 +111,79 @@ MOCK_ACADEMIC_INFO = {
     "courses": [
         {
             "name": "Mathematics",
+            "description": "Algebra, functions, and problem-solving practice.",
             "teacher": "Ms. Smith",
             "grade": "A",
             "status": "Current",
             "next_item": "Algebra worksheet due Friday",
-            "assignments": ["Algebra worksheet", "Chapter 4 review"],
+            "assignments": [
+                {
+                    "name": "Algebra Worksheet",
+                    "grade": "7/8",
+                    "type": "Criteria A",
+                    "comment": "Strong method, minor arithmetic error.",
+                },
+                {
+                    "name": "Chapter 4 Review",
+                    "grade": "8/8",
+                    "type": "Criteria C",
+                    "comment": "Clear reasoning and complete explanations.",
+                },
+            ],
         },
         {
             "name": "English Literature",
+            "description": "Reading comprehension, written response, and discussion.",
             "teacher": "Mr. Brown",
             "grade": "B+",
             "status": "Current",
             "next_item": "Reading response pending",
-            "assignments": ["Reading response"],
+            "assignments": [
+                {
+                    "name": "Reading Response",
+                    "grade": "6/8",
+                    "type": "Criteria B",
+                    "comment": "Good interpretation; add more textual evidence.",
+                },
+            ],
         },
         {
             "name": "Computer Science",
+            "description": "Programming fundamentals, debugging, and project design.",
             "teacher": "Dr. Lee",
             "grade": "A-",
             "status": "Current",
             "next_item": "Project checkpoint upcoming",
-            "assignments": ["Project checkpoint", "Debugging journal"],
+            "assignments": [
+                {
+                    "name": "Project Checkpoint",
+                    "grade": "7/8",
+                    "type": "Criteria D",
+                    "comment": "Good progress; improve documentation.",
+                },
+                {
+                    "name": "Debugging Journal",
+                    "grade": "8/8",
+                    "type": "Criteria C",
+                    "comment": "Detailed reflection and useful test cases.",
+                },
+            ],
         },
         {
             "name": "History",
+            "description": "Historical sources, argument writing, and quiz review.",
             "teacher": "Ms. Chen",
             "grade": "B",
             "status": "Current",
             "next_item": "Quiz review available",
-            "assignments": ["Quiz review notes"],
+            "assignments": [
+                {
+                    "name": "Quiz Review Notes",
+                    "grade": "6/8",
+                    "type": "Criteria A",
+                    "comment": "Accurate facts; needs stronger organization.",
+                },
+            ],
         },
     ],
     "notices": [
@@ -237,7 +281,25 @@ class SmartLearningWindow(QMainWindow):
             QPushButton:hover {
                 border-color: #2364c8;
             }
+            QPushButton#courseSelectorButton {
+                background: #edf0f4;
+                color: #20242a;
+                min-width: 150px;
+                padding: 10px 16px;
+            }
+            QPushButton#selectedCourseButton {
+                background: #2364c8;
+                border-color: #2364c8;
+                color: #ffffff;
+                min-width: 150px;
+                padding: 10px 16px;
+            }
             QFrame#courseCard, QFrame#summaryTile, QFrame#noticeCard {
+                background: #ffffff;
+                border: 1px solid #d7dce3;
+                border-radius: 8px;
+            }
+            QFrame#assignmentCard {
                 background: #ffffff;
                 border: 1px solid #d7dce3;
                 border-radius: 8px;
@@ -392,20 +454,25 @@ class SmartLearningWindow(QMainWindow):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(14)
 
-        self.course_group = QGroupBox("Courses")
-        course_group_layout = QVBoxLayout(self.course_group)
-        self.course_list = QWidget()
-        self.course_list_layout = QVBoxLayout(self.course_list)
-        self.course_list_layout.setContentsMargins(0, 0, 0, 0)
-        self.course_list_layout.setSpacing(10)
+        self.course_selector_group = QGroupBox("Select Course")
+        self.course_selector_layout = QHBoxLayout(self.course_selector_group)
+        self.course_selector_layout.setSpacing(10)
+
+        self.course_detail_group = QGroupBox("Course Details")
+        course_detail_group_layout = QVBoxLayout(self.course_detail_group)
+        self.course_detail = QWidget()
+        self.course_detail_layout = QVBoxLayout(self.course_detail)
+        self.course_detail_layout.setContentsMargins(0, 0, 0, 0)
+        self.course_detail_layout.setSpacing(10)
 
         course_scroll = QScrollArea()
         course_scroll.setWidgetResizable(True)
         course_scroll.setFrameShape(NO_FRAME)
-        course_scroll.setWidget(self.course_list)
-        course_group_layout.addWidget(course_scroll)
+        course_scroll.setWidget(self.course_detail)
+        course_detail_group_layout.addWidget(course_scroll)
 
-        layout.addWidget(self.course_group, stretch=1)
+        layout.addWidget(self.course_selector_group)
+        layout.addWidget(self.course_detail_group, stretch=1)
         return tab
 
     def _build_status_bar(self) -> QFrame:
@@ -439,7 +506,8 @@ class SmartLearningWindow(QMainWindow):
         self._clear_layout(self.profile_layout)
         self._clear_layout(self.summary_layout)
         self._clear_layout(self.schedule_list_layout)
-        self._clear_layout(self.course_list_layout)
+        self._clear_layout(self.course_selector_layout)
+        self._clear_layout(self.course_detail_layout)
         self._clear_layout(self.notice_layout)
 
         self._render_profile(data)
@@ -497,12 +565,90 @@ class SmartLearningWindow(QMainWindow):
 
     def _render_courses(self, courses: list[dict[str, Any]]) -> None:
         if not courses:
-            self.course_list_layout.addWidget(QLabel("No course information available."))
+            self.course_detail_layout.addWidget(QLabel("No course information available."))
             return
 
-        for course in courses:
-            self.course_list_layout.addWidget(self._course_card(course))
-        self.course_list_layout.addStretch(1)
+        self.current_courses = courses
+        self.course_buttons = []
+        for index, course in enumerate(courses):
+            button = QPushButton(str(course.get("name", f"Course {index + 1}")))
+            button.setCheckable(True)
+            button.setObjectName("courseSelectorButton")
+            button.clicked.connect(lambda checked=False, course_index=index: self._select_course(course_index))
+            self.course_buttons.append(button)
+            self.course_selector_layout.addWidget(button)
+
+        self.course_selector_layout.addStretch(1)
+        self._select_course(0)
+
+    def _select_course(self, index: int) -> None:
+        if index < 0 or index >= len(self.current_courses):
+            return
+
+        for button_index, button in enumerate(self.course_buttons):
+            is_selected = button_index == index
+            button.setChecked(is_selected)
+            button.setObjectName("selectedCourseButton" if is_selected else "courseSelectorButton")
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+        self._clear_layout(self.course_detail_layout)
+        self.course_detail_layout.addWidget(self._course_detail_section(self.current_courses[index]))
+        self.course_detail_layout.addStretch(1)
+
+    def _course_detail_section(self, course: dict[str, Any]) -> QWidget:
+        section = QWidget()
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        name_group = QGroupBox("Name")
+        name_layout = QVBoxLayout(name_group)
+        name_label = QLabel(str(course.get("name", "Unnamed Course")))
+        name_label.setObjectName("sectionTitle")
+        name_layout.addWidget(name_label)
+
+        description_group = QGroupBox("Description")
+        description_layout = QVBoxLayout(description_group)
+        description = QLabel(str(course.get("description", "No description available.")))
+        description.setWordWrap(True)
+        description_layout.addWidget(description)
+
+        assignment_group = QGroupBox("Assignments")
+        assignment_layout = QVBoxLayout(assignment_group)
+        assignments = course.get("assignments", [])
+        if assignments:
+            for assignment in assignments:
+                assignment_layout.addWidget(self._assignment_card(assignment))
+        else:
+            assignment_layout.addWidget(QLabel("No assignments listed for this course."))
+
+        layout.addWidget(name_group)
+        layout.addWidget(description_group)
+        layout.addWidget(assignment_group)
+        return section
+
+    def _assignment_card(self, assignment: dict[str, Any]) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("assignmentCard")
+        layout = QGridLayout(frame)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setHorizontalSpacing(18)
+        layout.setVerticalSpacing(6)
+
+        name = QLabel(str(assignment.get("name", "Unnamed Assignment")))
+        name.setObjectName("sectionTitle")
+        grade = QLabel(f"Grade: {assignment.get('grade', 'N/A')}")
+        assignment_type = QLabel(f"Type: {assignment.get('type', 'N/A')}")
+        comment = QLabel(f"Comment: {assignment.get('comment', 'No comment')}")
+        comment.setWordWrap(True)
+
+        layout.addWidget(name, 0, 0)
+        layout.addWidget(grade, 0, 1)
+        layout.addWidget(assignment_type, 1, 1)
+        layout.addWidget(comment, 2, 0, 1, 2)
+        layout.setColumnStretch(0, 1)
+        return frame
 
     def _render_schedule(self, schedule_days: list[dict[str, Any]]) -> None:
         if not schedule_days:
@@ -565,39 +711,6 @@ class SmartLearningWindow(QMainWindow):
         layout.addWidget(detail, 2, 1, 1, 2)
         layout.setColumnStretch(1, 1)
         return frame
-
-    def _course_card(self, course: dict[str, Any]) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("courseCard")
-        layout = QGridLayout(frame)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setHorizontalSpacing(18)
-        layout.setVerticalSpacing(6)
-
-        name = QLabel(str(course.get("name", "Unnamed Course")))
-        name.setObjectName("sectionTitle")
-        teacher = QLabel(str(course.get("teacher", "Teacher unavailable")))
-        teacher.setObjectName("mutedText")
-        grade = QLabel(f"Grade: {course.get('grade', 'N/A')}")
-        status = QLabel(f"Status: {course.get('status', 'Unknown')}")
-        next_item = QLabel(str(course.get("next_item", "No upcoming item")))
-        next_item.setWordWrap(True)
-        assignments = QLabel(self._format_assignments(course.get("assignments", [])))
-        assignments.setWordWrap(True)
-
-        layout.addWidget(name, 0, 0)
-        layout.addWidget(teacher, 1, 0)
-        layout.addWidget(grade, 0, 1)
-        layout.addWidget(status, 1, 1)
-        layout.addWidget(next_item, 2, 0, 1, 2)
-        layout.addWidget(assignments, 3, 0, 1, 2)
-        layout.setColumnStretch(0, 1)
-        return frame
-
-    def _format_assignments(self, assignments: list[str]) -> str:
-        if not assignments:
-            return "Assignments: none listed"
-        return "Assignments: " + ", ".join(assignments)
 
     def _render_notices(self, notices: list[str]) -> None:
         if not notices:
