@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from Backend.Authentication import AuthenticationModule
+from Backend.Data_Acquisition import InformationAcquisitionModule
 from Backend.Data_Access import DataAccessModule
 from Backend.Error_Handler import ErrorHandlingModule
 from Backend.Processer import DataProcessingModule
@@ -23,12 +24,17 @@ class ApplicationController(QObject):
         parent: QObject | None = None,
         data_access_module: DataAccessModule | None = None,
         authentication_module: AuthenticationModule | None = None,
+        acquisition_module: InformationAcquisitionModule | None = None,
         processor_module: DataProcessingModule | None = None,
         error_handler: ErrorHandlingModule | None = None,
     ) -> None:
         super().__init__(parent)
         self.data_access_module = data_access_module or DataAccessModule(self)
-        self.authentication_module = authentication_module or AuthenticationModule(self)
+        self.authentication_module = authentication_module or AuthenticationModule(
+            self,
+            data_access_module=self.data_access_module,
+        )
+        self.acquisition_module = acquisition_module or InformationAcquisitionModule(self)
         self.processor_module = processor_module or DataProcessingModule(self)
         self.error_handler = error_handler or ErrorHandlingModule(self)
         self._pending_login_credentials: tuple[str, str] | None = None
@@ -39,6 +45,10 @@ class ApplicationController(QObject):
         self.data_access_module.data_access_failed.connect(self._handle_data_access_failure)
         self.authentication_module.authentication_succeeded.connect(self._run_refresh_pipeline)
         self.authentication_module.authentication_failed.connect(self.error_handler.handle_authentication_error)
+        self.authentication_module.authentication_status.connect(self.controller_status.emit)
+        self.acquisition_module.course_info_acquired.connect(self._handle_course_info_acquired)
+        self.acquisition_module.acquisition_failed.connect(self.error_handler.handle_pipeline_error)
+        self.acquisition_module.acquisition_status.connect(self.controller_status.emit)
         self.processor_module.processing_succeeded.connect(self._finish_refresh)
         self.processor_module.processing_failed.connect(self.error_handler.handle_pipeline_error)
         self.error_handler.error_ready.connect(self._handle_backend_error)
@@ -69,8 +79,12 @@ class ApplicationController(QObject):
 
         self.login_failed.emit("Login failed: student ID or password does not match local settings.")
 
-    def _run_refresh_pipeline(self) -> None:
-        self.controller_status.emit("Authentication succeeded. Running placeholder data pipeline.")
+    def _run_refresh_pipeline(self, driver: object) -> None:
+        self.controller_status.emit("Authentication succeeded. Acquiring course information.")
+        self.acquisition_module.acquire_course_info(driver)
+
+    def _handle_course_info_acquired(self, courses: list) -> None:
+        self.controller_status.emit(f"Acquired {len(courses)} course cards. Running placeholder data pipeline.")
         self.processor_module.run_placeholder_pipeline()
 
     def _finish_refresh(self, academic_info: dict) -> None:

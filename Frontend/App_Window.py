@@ -22,6 +22,7 @@ from Frontend.qt_compat import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -395,6 +396,7 @@ class SmartLearningWindow(QMainWindow):
         self.login_button = QPushButton("Login")
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.setObjectName("primaryButton")
+        self.update_auth_button = QPushButton("Change Email/Password")
         self.test_data_access_button = QPushButton("Test Data Access")
 
         layout.addWidget(QLabel("Student ID"), 0, 0)
@@ -403,6 +405,7 @@ class SmartLearningWindow(QMainWindow):
         layout.addWidget(self.password_input, 0, 3)
         layout.addWidget(self.login_button, 0, 4)
         layout.addWidget(self.refresh_button, 0, 5)
+        layout.addWidget(self.update_auth_button, 1, 2, 1, 2)
         layout.addWidget(self.test_data_access_button, 1, 4, 1, 2)
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(3, 1)
@@ -504,6 +507,7 @@ class SmartLearningWindow(QMainWindow):
         self.settings_button.clicked.connect(self.input_module.request_settings)
         self.logout_button.clicked.connect(self.input_module.request_logout)
         self.login_button.clicked.connect(self._send_login_input)
+        self.update_auth_button.clicked.connect(self._update_auth_credentials)
         self.test_data_access_button.clicked.connect(self.data_access_module.request_all_data)
         self.input_module.content_access_changed.connect(self._set_content_access)
         self.input_module.validation_failed.connect(self.status_error_display.display_error)
@@ -516,6 +520,7 @@ class SmartLearningWindow(QMainWindow):
         self.data_access_module.all_data_loaded.connect(self._show_data_access_result)
         self.data_access_module.academic_info_loaded.connect(self.render_academic_info)
         self.data_access_module.data_access_failed.connect(self.status_error_display.display_error)
+        self.data_access_module.auth_credentials_updated.connect(self._show_auth_update_success)
         self.status_error_display.status_ready.connect(self.set_status)
 
     def _send_login_input(self) -> None:
@@ -572,6 +577,30 @@ class SmartLearningWindow(QMainWindow):
     def _clear_login_inputs(self) -> None:
         self.student_id_input.clear()
         self.password_input.clear()
+
+    def _update_auth_credentials(self) -> None:
+        username, username_ok = QInputDialog.getText(
+            self,
+            "Change TigerNet Login",
+            "Email / username:",
+        )
+        if not username_ok:
+            return
+
+        password, password_ok = QInputDialog.getText(
+            self,
+            "Change TigerNet Login",
+            "Password:",
+            ECHO_PASSWORD,
+        )
+        if not password_ok:
+            return
+
+        self.data_access_module.update_auth_credentials(username, password)
+
+    def _show_auth_update_success(self) -> None:
+        self.status_error_display.display_status("TigerNet login credentials updated.")
+        QMessageBox.information(self, "Smart Learning", "TigerNet login credentials updated.")
 
     def _set_content_access(self, can_view_content: bool) -> None:
         self.tabs.setTabEnabled(1, can_view_content)

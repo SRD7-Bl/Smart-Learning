@@ -14,9 +14,11 @@ class DataAccessModule(QObject):
     """Read local user settings and academic information."""
 
     user_settings_loaded = pyqtSignal(dict)
+    auth_credentials_loaded = pyqtSignal(str, str)
     academic_info_loaded = pyqtSignal(dict)
     all_data_loaded = pyqtSignal(dict, dict)
     data_access_failed = pyqtSignal(str)
+    auth_credentials_updated = pyqtSignal()
 
     def __init__(
         self,
@@ -38,6 +40,42 @@ class DataAccessModule(QObject):
 
         self._print_user_settings_summary(user_settings)
         self.user_settings_loaded.emit(user_settings)
+
+    def request_auth_credentials(self) -> None:
+        try:
+            user_settings = self._read_user_settings()
+            auth = user_settings.get("auth", {})
+            student_id = str(auth.get("student_id", "")).strip()
+            password = str(auth.get("password", ""))
+        except ValueError as error:
+            self.data_access_failed.emit(str(error))
+            return
+
+        if not student_id or not password:
+            self.data_access_failed.emit("Local auth credentials are missing student ID or password.")
+            return
+
+        self._print_user_settings_summary(user_settings)
+        self.auth_credentials_loaded.emit(student_id, password)
+
+    def update_auth_credentials(self, username: str, password: str) -> None:
+        username = username.strip()
+        if not username or not password:
+            self.data_access_failed.emit("Username and password are required.")
+            return
+
+        try:
+            user_settings = self._read_user_settings()
+            user_settings["auth"] = {
+                "student_id": username,
+                "password": password,
+            }
+            self._write_json_file(self.user_settings_path, self._encrypted_user_settings(user_settings))
+        except ValueError as error:
+            self.data_access_failed.emit(str(error))
+            return
+
+        self.auth_credentials_updated.emit()
 
     def request_academic_info(self) -> None:
         try:
