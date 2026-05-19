@@ -19,6 +19,7 @@ class DataAccessModule(QObject):
     all_data_loaded = pyqtSignal(dict, dict)
     data_access_failed = pyqtSignal(str)
     auth_credentials_updated = pyqtSignal()
+    academic_info_saved = pyqtSignal()
 
     def __init__(
         self,
@@ -86,6 +87,22 @@ class DataAccessModule(QObject):
 
         self._print_academic_info_summary(academic_info)
         self.academic_info_loaded.emit(academic_info)
+
+    def load_academic_info_snapshot(self) -> dict[str, Any]:
+        return self._read_academic_info()
+
+    def save_academic_info(self, academic_info: dict[str, Any]) -> None:
+        if not isinstance(academic_info, dict):
+            self.data_access_failed.emit("Academic info must be a JSON object before saving.")
+            return
+
+        try:
+            self._write_json_file(self.academic_info_path, self._encrypted_academic_info(academic_info))
+        except ValueError as error:
+            self.data_access_failed.emit(str(error))
+            return
+
+        self.academic_info_saved.emit()
 
     def request_all_data(self) -> None:
         try:

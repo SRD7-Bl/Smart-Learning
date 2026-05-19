@@ -6,6 +6,7 @@ from Backend.Authentication import AuthenticationModule
 from Backend.Data_Acquisition import InformationAcquisitionModule
 from Backend.Data_Access import DataAccessModule
 from Backend.Error_Handler import ErrorHandlingModule
+from Backend.Parser import ParserModule
 from Backend.Processer import DataProcessingModule
 from Frontend.qt_compat import QObject, pyqtSignal
 
@@ -25,6 +26,7 @@ class ApplicationController(QObject):
         data_access_module: DataAccessModule | None = None,
         authentication_module: AuthenticationModule | None = None,
         acquisition_module: InformationAcquisitionModule | None = None,
+        parser_module: ParserModule | None = None,
         processor_module: DataProcessingModule | None = None,
         error_handler: ErrorHandlingModule | None = None,
     ) -> None:
@@ -35,6 +37,7 @@ class ApplicationController(QObject):
             data_access_module=self.data_access_module,
         )
         self.acquisition_module = acquisition_module or InformationAcquisitionModule(self)
+        self.parser_module = parser_module or ParserModule(self)
         self.processor_module = processor_module or DataProcessingModule(self)
         self.error_handler = error_handler or ErrorHandlingModule(self)
         self._pending_login_credentials: tuple[str, str] | None = None
@@ -49,8 +52,12 @@ class ApplicationController(QObject):
         self.acquisition_module.course_info_acquired.connect(self._handle_course_info_acquired)
         self.acquisition_module.acquisition_failed.connect(self.error_handler.handle_pipeline_error)
         self.acquisition_module.acquisition_status.connect(self.controller_status.emit)
+        self.parser_module.parsing_succeeded.connect(self._handle_parsed_course_info)
+        self.parser_module.parsing_failed.connect(self.error_handler.handle_pipeline_error)
+        self.parser_module.parsing_status.connect(self.controller_status.emit)
         self.processor_module.processing_succeeded.connect(self._finish_refresh)
         self.processor_module.processing_failed.connect(self.error_handler.handle_pipeline_error)
+        self.processor_module.processing_status.connect(self.controller_status.emit)
         self.error_handler.error_ready.connect(self._handle_backend_error)
 
     def handle_login_request(self, student_id: str, password: str) -> None:
@@ -84,8 +91,13 @@ class ApplicationController(QObject):
         self.acquisition_module.acquire_course_info(driver)
 
     def _handle_course_info_acquired(self, courses: list) -> None:
-        self.controller_status.emit(f"Acquired {len(courses)} course cards. Running placeholder data pipeline.")
-        self.processor_module.run_placeholder_pipeline()
+        self.controller_status.emit(f"Acquired {len(courses)} course cards. Parsing course information.")
+        self.parser_module.parse_course_info(courses)
+
+    def _handle_parsed_course_info(self, academic_info: dict) -> None:
+        course_count = len(academic_info.get("courses", []))
+        self.controller_status.emit(f"Parsed {course_count} course(s). Running data processing pipeline.")
+        self.processor_module.process_academic_info(academic_info)
 
     def _finish_refresh(self, academic_info: dict) -> None:
         self.refresh_succeeded.emit(academic_info)

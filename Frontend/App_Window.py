@@ -18,6 +18,7 @@ from Frontend.qt_compat import (
     QApplication,
     ECHO_PASSWORD,
     NO_FRAME,
+    QComboBox,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -218,6 +219,7 @@ class SmartLearningWindow(QMainWindow):
         self.data_access_module = data_access_module or DataAccessModule(self)
         self.status_error_display = status_error_display or StatusErrorDisplayModule(self, self)
         self.status_error_display.set_dialog_parent(self)
+        self.current_courses: list[dict[str, Any]] = []
 
         self.setWindowTitle("Smart Learning")
         self.setMinimumSize(980, 680)
@@ -296,18 +298,12 @@ class SmartLearningWindow(QMainWindow):
             QPushButton:hover {
                 border-color: #2364c8;
             }
-            QPushButton#courseSelectorButton {
-                background: #edf0f4;
-                color: #20242a;
-                min-width: 150px;
-                padding: 10px 16px;
-            }
-            QPushButton#selectedCourseButton {
-                background: #2364c8;
-                border-color: #2364c8;
-                color: #ffffff;
-                min-width: 150px;
-                padding: 10px 16px;
+            QComboBox {
+                background: #ffffff;
+                border: 1px solid #c8d0dc;
+                border-radius: 6px;
+                min-height: 34px;
+                padding: 6px 10px;
             }
             QFrame#courseCard {
                 background: #ffffff;
@@ -316,6 +312,11 @@ class SmartLearningWindow(QMainWindow):
             }
             QFrame#assignmentCard {
                 background: #ffffff;
+                border: 1px solid #d7dce3;
+                border-radius: 8px;
+            }
+            QFrame#filterPanel {
+                background: #f8fafc;
                 border: 1px solid #d7dce3;
                 border-radius: 8px;
             }
@@ -467,8 +468,12 @@ class SmartLearningWindow(QMainWindow):
         layout.setSpacing(14)
 
         self.course_selector_group = QGroupBox("Select Course")
-        self.course_selector_layout = QHBoxLayout(self.course_selector_group)
-        self.course_selector_layout.setSpacing(10)
+        self.course_selector_layout = QVBoxLayout(self.course_selector_group)
+        self.course_selector_layout.setSpacing(8)
+        self.course_selector = QComboBox()
+        self.course_selector.setMinimumWidth(360)
+        self.course_selector.currentIndexChanged.connect(self._select_course)
+        self.course_selector_layout.addWidget(self.course_selector)
 
         self.course_detail_group = QGroupBox("Course Details")
         course_detail_group_layout = QVBoxLayout(self.course_detail_group)
@@ -533,8 +538,10 @@ class SmartLearningWindow(QMainWindow):
     def render_academic_info(self, data: dict[str, Any]) -> None:
         self._clear_layout(self.profile_layout)
         self._clear_layout(self.schedule_list_layout)
-        self._clear_layout(self.course_selector_layout)
         self._clear_layout(self.course_detail_layout)
+        self.course_selector.blockSignals(True)
+        self.course_selector.clear()
+        self.course_selector.blockSignals(False)
 
         self._render_profile(data)
         self._render_schedule(data.get("schedule_days", data.get("schedule", [])))
@@ -632,33 +639,22 @@ class SmartLearningWindow(QMainWindow):
             self.profile_layout.setColumnStretch(column, 1)
 
     def _render_courses(self, courses: list[dict[str, Any]]) -> None:
+        self.current_courses = []
         if not courses:
             self.course_detail_layout.addWidget(QLabel("No course information available."))
             return
 
         self.current_courses = courses
-        self.course_buttons = []
+        self.course_selector.blockSignals(True)
         for index, course in enumerate(courses):
-            button = QPushButton(str(course.get("name", f"Course {index + 1}")))
-            button.setCheckable(True)
-            button.setObjectName("courseSelectorButton")
-            button.clicked.connect(lambda checked=False, course_index=index: self._select_course(course_index))
-            self.course_buttons.append(button)
-            self.course_selector_layout.addWidget(button)
-
-        self.course_selector_layout.addStretch(1)
+            self.course_selector.addItem(str(course.get("name", f"Course {index + 1}")))
+        self.course_selector.blockSignals(False)
+        self.course_selector.setCurrentIndex(0)
         self._select_course(0)
 
     def _select_course(self, index: int) -> None:
         if index < 0 or index >= len(self.current_courses):
             return
-
-        for button_index, button in enumerate(self.course_buttons):
-            is_selected = button_index == index
-            button.setChecked(is_selected)
-            button.setObjectName("selectedCourseButton" if is_selected else "courseSelectorButton")
-            button.style().unpolish(button)
-            button.style().polish(button)
 
         self._clear_layout(self.course_detail_layout)
         self.course_detail_layout.addWidget(self._course_detail_section(self.current_courses[index]))
@@ -686,15 +682,162 @@ class SmartLearningWindow(QMainWindow):
         assignment_layout = QVBoxLayout(assignment_group)
         assignments = course.get("assignments", [])
         if assignments:
-            for assignment in assignments:
-                assignment_layout.addWidget(self._assignment_card(assignment))
+            filter_panel, filter_state, results_layout = self._assignment_filter_panel(assignments)
+            assignment_layout.addWidget(filter_panel)
+            assignment_layout.addLayout(results_layout)
+
+            def refresh_assignments(*_: Any) -> None:
+                self._render_filtered_assignments(assignments, results_layout, filter_state)
+
+            filter_state["criterion"].currentIndexChanged.connect(refresh_assignments)
+            filter_state["grade"].currentIndexChanged.connect(refresh_assignments)
+            filter_state["status"].currentIndexChanged.connect(refresh_assignments)
+            filter_state["keyword"].textChanged.connect(refresh_assignments)
+            refresh_assignments()
         else:
-            assignment_layout.addWidget(QLabel("No assignments listed for this course."))
+            empty_message = QLabel("No assignments captured for this course. This course may not expose grade details yet.")
+            empty_message.setWordWrap(True)
+            assignment_layout.addWidget(empty_message)
 
         layout.addWidget(name_group)
         layout.addWidget(description_group)
         layout.addWidget(assignment_group)
         return section
+
+    def _assignment_filter_panel(
+        self,
+        assignments: list[dict[str, Any]],
+    ) -> tuple[QFrame, dict[str, Any], QVBoxLayout]:
+        panel = QFrame()
+        panel.setObjectName("filterPanel")
+        layout = QGridLayout(panel)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setHorizontalSpacing(12)
+        layout.setVerticalSpacing(8)
+
+        criterion_filter = QComboBox()
+        criterion_filter.addItem("All criteria", "")
+        criterion_filter.setMinimumWidth(260)
+        for criterion_type in self._assignment_filter_values(assignments, "type"):
+            criterion_filter.addItem(criterion_type, criterion_type)
+
+        grade_filter = QComboBox()
+        grade_filter.addItem("All grades", "")
+        grade_filter.setMinimumWidth(160)
+        for grade in self._assignment_filter_values(assignments, "grade"):
+            grade_filter.addItem(grade, grade)
+
+        status_filter = QComboBox()
+        status_filter.addItem("All status", "")
+        status_filter.setMinimumWidth(180)
+        status_filter.addItem("Graded", "graded")
+        status_filter.addItem("Not graded", "not_graded")
+        status_filter.addItem("Missing", "missing")
+        status_filter.addItem("Excluded", "excluded")
+        status_filter.addItem("Included", "included")
+
+        keyword_filter = QLineEdit()
+        keyword_filter.setPlaceholderText("Search name, type, grade, or comment")
+
+        layout.addWidget(QLabel("Criteria / Type"), 0, 0)
+        layout.addWidget(criterion_filter, 1, 0)
+        layout.addWidget(QLabel("Grade"), 0, 1)
+        layout.addWidget(grade_filter, 1, 1)
+        layout.addWidget(QLabel("Status"), 0, 2)
+        layout.addWidget(status_filter, 1, 2)
+        layout.addWidget(QLabel("Keyword"), 0, 3)
+        layout.addWidget(keyword_filter, 1, 3)
+        layout.setColumnMinimumWidth(0, 280)
+        layout.setColumnMinimumWidth(1, 170)
+        layout.setColumnMinimumWidth(2, 190)
+        layout.setColumnStretch(3, 1)
+
+        results_layout = QVBoxLayout()
+        results_layout.setContentsMargins(0, 0, 0, 0)
+        results_layout.setSpacing(10)
+        return panel, {
+            "criterion": criterion_filter,
+            "grade": grade_filter,
+            "status": status_filter,
+            "keyword": keyword_filter,
+        }, results_layout
+
+    def _render_filtered_assignments(
+        self,
+        assignments: list[dict[str, Any]],
+        results_layout: QVBoxLayout,
+        filter_state: dict[str, Any],
+    ) -> None:
+        self._clear_layout(results_layout)
+        visible_assignments = [
+            assignment
+            for assignment in assignments
+            if self._assignment_matches_filters(assignment, filter_state)
+        ]
+
+        if not visible_assignments:
+            empty_message = QLabel("No assignments match the current filters.")
+            empty_message.setWordWrap(True)
+            results_layout.addWidget(empty_message)
+            return
+
+        for assignment in visible_assignments:
+            results_layout.addWidget(self._assignment_card(assignment))
+
+    def _assignment_matches_filters(
+        self,
+        assignment: dict[str, Any],
+        filter_state: dict[str, Any],
+    ) -> bool:
+        criterion = filter_state["criterion"].currentData()
+        grade = filter_state["grade"].currentData()
+        status = filter_state["status"].currentData()
+        keyword = filter_state["keyword"].text().strip().lower()
+
+        assignment_criterion = str(assignment.get("type", "")).strip()
+        assignment_grade = str(assignment.get("grade", "")).strip()
+        assignment_status = self._assignment_status(assignment)
+        is_excluded = bool(assignment.get("excluded_from_cumulative_grade", False))
+
+        if criterion and assignment_criterion != criterion:
+            return False
+        if grade and assignment_grade != grade:
+            return False
+        if status == "excluded" and not is_excluded:
+            return False
+        if status == "included" and is_excluded:
+            return False
+        if status not in ("", None, "excluded", "included") and assignment_status != status:
+            return False
+        if keyword:
+            searchable = " ".join(
+                str(assignment.get(field, ""))
+                for field in ("name", "type", "grade", "comment", "criterion", "grade_status")
+            ).lower()
+            if keyword not in searchable:
+                return False
+
+        return True
+
+    def _assignment_filter_values(self, assignments: list[dict[str, Any]], field: str) -> list[str]:
+        values = set()
+        for assignment in assignments:
+            value = str(assignment.get(field, "")).strip()
+            if value:
+                values.add(value)
+        return sorted(values)
+
+    def _assignment_status(self, assignment: dict[str, Any]) -> str:
+        status = str(assignment.get("grade_status", "")).strip()
+        if status:
+            return status
+
+        grade = str(assignment.get("grade", "")).strip()
+        if not grade or grade == "N/A":
+            return "missing"
+        if grade.startswith("-"):
+            return "not_graded"
+        return "graded"
 
     def _assignment_card(self, assignment: dict[str, Any]) -> QFrame:
         frame = QFrame()
@@ -706,8 +849,10 @@ class SmartLearningWindow(QMainWindow):
 
         name = QLabel(str(assignment.get("name", "Unnamed Assignment")))
         name.setObjectName("sectionTitle")
+        name.setWordWrap(True)
         grade = QLabel(f"Grade: {assignment.get('grade', 'N/A')}")
         assignment_type = QLabel(f"Type: {assignment.get('type', 'N/A')}")
+        assignment_type.setWordWrap(True)
         comment = QLabel(f"Comment: {assignment.get('comment', 'No comment')}")
         comment.setWordWrap(True)
 

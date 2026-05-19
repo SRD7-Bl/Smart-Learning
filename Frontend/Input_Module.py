@@ -106,8 +106,7 @@ class UserInputModule(QObject):
         self.content_access_changed.emit(self.is_logged_in)
         self.auto_login_changed.emit(self.auto_login_enabled)
         if self.is_logged_in:
-            self.status_changed.emit("Auto login is enabled. Requesting latest data.")
-            self.refresh_request_accepted.emit()
+            self.status_changed.emit("Auto login is enabled. Showing local academic information.")
         else:
             self.status_changed.emit("Login is required before viewing academic information.")
 

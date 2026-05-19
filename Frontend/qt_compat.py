@@ -4,6 +4,7 @@ try:
     from PyQt5.QtCore import QObject, Qt, pyqtSignal
     from PyQt5.QtWidgets import (
         QApplication,
+        QComboBox,
         QFrame,
         QGridLayout,
         QGroupBox,
@@ -29,6 +30,7 @@ except ImportError:  # pragma: no cover - depends on the local PyQt install.
     from PyQt6.QtCore import QObject, Qt, pyqtSignal
     from PyQt6.QtWidgets import (
         QApplication,
+        QComboBox,
         QFrame,
         QGridLayout,
         QGroupBox,
