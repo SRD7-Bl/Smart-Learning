@@ -29,8 +29,8 @@ class ParserModule(QObject):
             self.parsing_failed.emit(f"Parser failed: {error}")
             return
 
-        print("ParserModule rough academic info:")
-        print(json.dumps(parsed, ensure_ascii=False, indent=2))
+        # print("ParserModule rough academic info:")
+        # print(json.dumps(parsed, ensure_ascii=False, indent=2))
         self.parsing_status.emit(f"Parsed {len(parsed.get('courses', []))} course(s).")
         self.parsing_succeeded.emit(parsed)
 

@@ -41,6 +41,8 @@ class ApplicationController(QObject):
         self.processor_module = processor_module or DataProcessingModule(self)
         self.error_handler = error_handler or ErrorHandlingModule(self)
         self._pending_login_credentials: tuple[str, str] | None = None
+        self._pending_refresh_mode = "both"
+        self._pending_schedule_day_count = 1
         self._connect_modules()
 
     def _connect_modules(self) -> None:
@@ -50,6 +52,7 @@ class ApplicationController(QObject):
         self.authentication_module.authentication_failed.connect(self.error_handler.handle_authentication_error)
         self.authentication_module.authentication_status.connect(self.controller_status.emit)
         self.acquisition_module.course_info_acquired.connect(self._handle_course_info_acquired)
+        self.acquisition_module.schedule_info_acquired.connect(self._handle_schedule_info_acquired)
         self.acquisition_module.acquisition_failed.connect(self.error_handler.handle_pipeline_error)
         self.acquisition_module.acquisition_status.connect(self.controller_status.emit)
         self.parser_module.parsing_succeeded.connect(self._handle_parsed_course_info)
@@ -65,8 +68,10 @@ class ApplicationController(QObject):
         self.controller_status.emit("AC received login request. Loading local user settings.")
         self.data_access_module.request_user_settings()
 
-    def handle_refresh_request(self) -> None:
-        self.controller_status.emit("AC received refresh request. Starting authentication.")
+    def handle_refresh_request(self, refresh_mode: str = "both", schedule_day_count: int = 1) -> None:
+        self._pending_refresh_mode = self._normalize_refresh_mode(refresh_mode)
+        self._pending_schedule_day_count = self._normalize_schedule_day_count(schedule_day_count)
+        self.controller_status.emit(f"AC received refresh request: {self._pending_refresh_mode}. Starting authentication.")
         self.authentication_module.request_authentication()
 
     def _check_login_against_settings(self, user_settings: dict) -> None:
@@ -87,8 +92,23 @@ class ApplicationController(QObject):
         self.login_failed.emit("Login failed: student ID or password does not match local settings.")
 
     def _run_refresh_pipeline(self, driver: object) -> None:
+        refresh_mode = self._pending_refresh_mode
+        if refresh_mode == "schedule":
+            self.controller_status.emit("Authentication succeeded. Acquiring schedule information.")
+            self.acquisition_module.acquire_schedule_info(driver, day_count=self._pending_schedule_day_count)
+            return
+
+        include_schedule = refresh_mode == "both"
         self.controller_status.emit("Authentication succeeded. Acquiring course information.")
-        self.acquisition_module.acquire_course_info(driver)
+        self.acquisition_module.acquire_course_info(
+            driver,
+            include_schedule=include_schedule,
+            schedule_day_count=self._pending_schedule_day_count,
+        )
+
+    def _handle_schedule_info_acquired(self, schedule: dict) -> None:
+        self.controller_status.emit("Schedule acquired. Reloading local academic information.")
+        self.processor_module.run_placeholder_pipeline()
 
     def _handle_course_info_acquired(self, courses: list) -> None:
         self.controller_status.emit(f"Acquired {len(courses)} course cards. Parsing course information.")
@@ -102,6 +122,7 @@ class ApplicationController(QObject):
     def _finish_refresh(self, academic_info: dict) -> None:
         self.refresh_succeeded.emit(academic_info)
         self.controller_status.emit("Refresh pipeline completed.")
+        self.authentication_module.close_driver()
 
     def _handle_data_access_failure(self, message: str) -> None:
         self.error_handler.handle_data_access_error(message)
@@ -112,4 +133,19 @@ class ApplicationController(QObject):
             self.login_failed.emit(message)
             return
 
+        self.authentication_module.close_driver()
         self.refresh_failed.emit(message)
+
+    def _normalize_refresh_mode(self, refresh_mode: str) -> str:
+        if refresh_mode in {"assignments", "schedule", "both"}:
+            return refresh_mode
+
+        return "both"
+
+    def _normalize_schedule_day_count(self, schedule_day_count: int) -> int:
+        try:
+            value = int(schedule_day_count)
+        except (TypeError, ValueError):
+            return 1
+
+        return max(1, min(value, 31))

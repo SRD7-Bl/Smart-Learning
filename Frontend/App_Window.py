@@ -397,6 +397,15 @@ class SmartLearningWindow(QMainWindow):
         self.login_button = QPushButton("Login")
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.setObjectName("primaryButton")
+        self.refresh_mode_selector = QComboBox()
+        self.refresh_mode_selector.addItem("Both", "both")
+        self.refresh_mode_selector.addItem("Assignments only", "assignments")
+        self.refresh_mode_selector.addItem("Schedule only", "schedule")
+        self.refresh_mode_selector.setMinimumWidth(170)
+        self.schedule_day_count_selector = QComboBox()
+        for day_count in (1, 3, 5, 7, 14, 31):
+            self.schedule_day_count_selector.addItem(f"{day_count} day(s)", day_count)
+        self.schedule_day_count_selector.setMinimumWidth(120)
         self.update_auth_button = QPushButton("Change Email/Password")
         self.test_data_access_button = QPushButton("Test Data Access")
 
@@ -405,9 +414,12 @@ class SmartLearningWindow(QMainWindow):
         layout.addWidget(QLabel("Password"), 0, 2)
         layout.addWidget(self.password_input, 0, 3)
         layout.addWidget(self.login_button, 0, 4)
-        layout.addWidget(self.refresh_button, 0, 5)
+        layout.addWidget(QLabel("Refresh"), 0, 5)
+        layout.addWidget(self.refresh_mode_selector, 0, 6)
+        layout.addWidget(self.schedule_day_count_selector, 0, 7)
+        layout.addWidget(self.refresh_button, 0, 8)
         layout.addWidget(self.update_auth_button, 1, 2, 1, 2)
-        layout.addWidget(self.test_data_access_button, 1, 4, 1, 2)
+        layout.addWidget(self.test_data_access_button, 1, 4, 1, 5)
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(3, 1)
         return panel
@@ -508,7 +520,7 @@ class SmartLearningWindow(QMainWindow):
         return frame
 
     def _connect_signal_board(self) -> None:
-        self.refresh_button.clicked.connect(self.input_module.request_refresh)
+        self.refresh_button.clicked.connect(self._send_refresh_input)
         self.settings_button.clicked.connect(self.input_module.request_settings)
         self.logout_button.clicked.connect(self.input_module.request_logout)
         self.login_button.clicked.connect(self._send_login_input)
@@ -534,6 +546,12 @@ class SmartLearningWindow(QMainWindow):
             self.password_input.text(),
         )
         self._clear_login_inputs()
+
+    def _send_refresh_input(self) -> None:
+        self.input_module.request_refresh(
+            str(self.refresh_mode_selector.currentData()),
+            int(self.schedule_day_count_selector.currentData()),
+        )
 
     def render_academic_info(self, data: dict[str, Any]) -> None:
         self._clear_layout(self.profile_layout)
@@ -614,6 +632,8 @@ class SmartLearningWindow(QMainWindow):
         self.tabs.setTabEnabled(2, can_view_content)
         self.logout_button.setEnabled(can_view_content)
         self.refresh_button.setEnabled(can_view_content)
+        self.refresh_mode_selector.setEnabled(can_view_content)
+        self.schedule_day_count_selector.setEnabled(can_view_content)
         self.login_button.setEnabled(not can_view_content)
 
         if can_view_content:

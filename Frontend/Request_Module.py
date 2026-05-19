@@ -38,6 +38,8 @@ class RequestSendingModule(QObject):
         self.request_queued.emit(f"RS forwarding login request for {student_id}.")
         self.application_controller.handle_login_request(student_id, password)
 
-    def send_refresh_request(self) -> None:
-        self.request_queued.emit("RS forwarding refresh request.")
-        self.application_controller.handle_refresh_request()
+    def send_refresh_request(self, refresh_mode: str = "both", schedule_day_count: int = 1) -> None:
+        self.request_queued.emit(
+            f"RS forwarding refresh request: {refresh_mode}, {schedule_day_count} schedule day(s)."
+        )
+        self.application_controller.handle_refresh_request(refresh_mode, schedule_day_count)

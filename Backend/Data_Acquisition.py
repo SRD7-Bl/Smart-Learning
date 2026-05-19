@@ -19,6 +19,20 @@ from Frontend.qt_compat import QObject, pyqtSignal
 class CourseAcquisitionLocators:
     """Editable locators for the Progress course cards."""
 
+    schedule_main_selector: str = "#col-main"
+    schedule_header_selector: str = "#col-main #schedule-header"
+    schedule_date_selector: str = "#col-main #schedule-header h2"
+    schedule_day_type_selector: str = "div"
+    schedule_rows_selector: str = "#col-main div.ch.schedule-list table tbody#accordionSchedules tr"
+    schedule_cell_selector: str = "td[data-heading]"
+    schedule_next_day_button_selector: str = "span.chCal-button-content"
+    schedule_next_day_button_xpath: str = (
+        "//*[@id='col-main']//span[contains(concat(' ', normalize-space(@class), ' '), ' chCal-button-content ') "
+        "and contains(translate(normalize-space(.), '\u00a0', ' '), '►')]"
+    )
+    schedule_next_day_text: str = "►"
+    schedule_rows_wait_seconds: int = 3
+
     progress_tab_by: str = By.ID
     progress_tab_value: str = "progress-btn"
     welcome_close_selector: str = "a.close.fa.fa-times"
@@ -50,6 +64,7 @@ class InformationAcquisitionModule(QObject):
     """Acquire raw course information from TigerNet after authentication."""
 
     course_info_acquired = pyqtSignal(list)
+    schedule_info_acquired = pyqtSignal(dict)
     acquisition_failed = pyqtSignal(str)
     acquisition_status = pyqtSignal(str)
 
@@ -63,10 +78,33 @@ class InformationAcquisitionModule(QObject):
         self.locators = locators or CourseAcquisitionLocators()
         self.timeout_seconds = timeout_seconds
 
-    def acquire_course_info(self, driver: WebDriver) -> None:
+    def acquire_schedule_info(self, driver: WebDriver, day_count: int = 1) -> None:
+        try:
+            driver.switch_to.default_content()
+            wait = WebDriverWait(driver, self.timeout_seconds)
+            self._dismiss_welcome_if_present(driver)
+            schedule = self._acquire_schedule_days(driver, wait, day_count)
+        except TimeoutException as error:
+            self.acquisition_failed.emit(f"Schedule acquisition timed out: {error.msg}")
+            return
+        except WebDriverException as error:
+            self.acquisition_failed.emit(f"Selenium schedule acquisition error: {error.msg}")
+            return
+
+        self.schedule_info_acquired.emit(schedule)
+
+    def acquire_course_info(
+        self,
+        driver: WebDriver,
+        include_schedule: bool = False,
+        schedule_day_count: int = 1,
+    ) -> None:
         try:
             wait = WebDriverWait(driver, self.timeout_seconds)
             self._dismiss_welcome_if_present(driver)
+            if include_schedule:
+                self._acquire_schedule_days(driver, wait, schedule_day_count)
+
             self.acquisition_status.emit("Opening Progress tab.")
             progress_tab = wait.until(
                 EC.element_to_be_clickable((self.locators.progress_tab_by, self.locators.progress_tab_value))
@@ -98,11 +136,302 @@ class InformationAcquisitionModule(QObject):
             self.acquisition_failed.emit(f"Selenium acquisition error: {error.msg}")
             return
 
-        print("InformationAcquisitionModule course info:")
-        for course in courses:
-            print(course)
+        # Assignment acquisition debug prints are intentionally disabled for now.
 
         self.course_info_acquired.emit(courses)
+
+    def _acquire_schedule_days(
+        self,
+        driver: WebDriver,
+        wait: WebDriverWait,
+        day_count: int,
+    ) -> dict[str, Any]:
+        schedules = []
+        try:
+            normalized_day_count = max(1, int(day_count))
+        except (TypeError, ValueError):
+            normalized_day_count = 1
+        for day_index in range(normalized_day_count):
+            schedule = self._acquire_daily_schedule(driver, wait, day_index + 1)
+            if schedule:
+                schedules.append(schedule)
+
+            if day_index >= normalized_day_count - 1:
+                break
+
+            current_date = schedule.get("date", "") if schedule else ""
+            if not self._go_to_next_schedule_day(driver, wait, current_date):
+                self.acquisition_status.emit("Could not find the next schedule day button; stopping schedule acquisition.")
+                break
+
+        result = {"schedule_days": schedules}
+        print("InformationAcquisitionModule schedule days:")
+        print(result)
+        return result
+
+    def _acquire_daily_schedule(
+        self,
+        driver: WebDriver,
+        wait: WebDriverWait,
+        day_number: int = 1,
+    ) -> dict[str, Any]:
+        self.acquisition_status.emit(f"Acquiring schedule day {day_number}.")
+        try:
+            wait.until(lambda active_driver: self._switch_to_context_with_schedule(active_driver))
+        except TimeoutException:
+            self.acquisition_status.emit("Schedule container was not found; continuing to assignment acquisition.")
+            return {}
+
+        self._wait_for_schedule_rows_or_empty_day(driver)
+        schedule = self._extract_daily_schedule(driver)
+        schedule["day_index"] = day_number
+        return schedule
+
+    def _go_to_next_schedule_day(self, driver: WebDriver, wait: WebDriverWait, current_date: str) -> bool:
+        next_button = self._find_next_schedule_day_button(driver)
+        if next_button is not None:
+            self.acquisition_status.emit("Opening next schedule day.")
+            self._click_element(driver, next_button)
+        elif self._click_next_schedule_day_with_js(driver):
+            self.acquisition_status.emit("Opening next schedule day.")
+        else:
+            return False
+
+        if not current_date:
+            wait.until(lambda active_driver: self._switch_to_context_with_schedule(active_driver))
+            return True
+
+        wait.until(lambda active_driver: self._current_schedule_date(active_driver) != current_date)
+        self._wait_for_schedule_rows_or_empty_day(driver)
+        return True
+
+    def _find_next_schedule_day_button(self, driver: WebDriver) -> WebElement | None:
+        button = self._find_next_schedule_day_button_in_current_context(driver)
+        if button is not None:
+            return button
+
+        driver.switch_to.default_content()
+        button = self._find_next_schedule_day_button_in_current_context(driver)
+        if button is not None:
+            return button
+
+        frames = driver.find_elements(By.CSS_SELECTOR, self.locators.iframe_selector)
+        for frame in frames:
+            driver.switch_to.default_content()
+            driver.switch_to.frame(frame)
+            button = self._find_next_schedule_day_button_in_current_context(driver)
+            if button is not None:
+                return button
+
+        driver.switch_to.default_content()
+        self._print_schedule_button_candidates(driver)
+        return None
+
+    def _find_next_schedule_day_button_in_current_context(self, driver: WebDriver) -> WebElement | None:
+        elements = driver.find_elements(By.XPATH, self.locators.schedule_next_day_button_xpath)
+        for element in elements:
+            clickable_element = self._clickable_schedule_ancestor(element)
+            if clickable_element is not None:
+                return clickable_element
+
+        for element in self._schedule_next_button_candidates(driver):
+            text = self._normalized_visible_text(element)
+            if text == self.locators.schedule_next_day_text:
+                clickable_element = self._clickable_schedule_ancestor(element)
+                if clickable_element is not None:
+                    return clickable_element
+
+        return None
+
+    def _clickable_schedule_ancestor(self, element: WebElement) -> WebElement | None:
+        clickable_ancestors = element.find_elements(By.XPATH, "./ancestor::*[self::button or self::a][1]")
+        return clickable_ancestors[0] if clickable_ancestors else element
+
+    def _click_next_schedule_day_with_js(self, driver: WebDriver) -> bool:
+        if self._click_next_schedule_day_with_js_in_current_context(driver):
+            return True
+
+        driver.switch_to.default_content()
+        if self._click_next_schedule_day_with_js_in_current_context(driver):
+            return True
+
+        frames = driver.find_elements(By.CSS_SELECTOR, self.locators.iframe_selector)
+        for frame in frames:
+            driver.switch_to.default_content()
+            driver.switch_to.frame(frame)
+            if self._click_next_schedule_day_with_js_in_current_context(driver):
+                return True
+
+        driver.switch_to.default_content()
+        return False
+
+    def _click_next_schedule_day_with_js_in_current_context(self, driver: WebDriver) -> bool:
+        return bool(
+            driver.execute_script(
+                """
+                const root = document.querySelector(arguments[2]) || document;
+                const spans = Array.from(root.querySelectorAll(arguments[0]));
+                const target = spans.find((span) => (
+                    (span.textContent || '').replace(/\\u00a0/g, ' ').trim() === arguments[1]
+                ));
+                if (!target) {
+                    return false;
+                }
+                const clickable = target.closest('button, a') || target;
+                clickable.click();
+                return true;
+                """,
+                self.locators.schedule_next_day_button_selector,
+                self.locators.schedule_next_day_text,
+                self.locators.schedule_main_selector,
+            )
+        )
+
+    def _print_schedule_button_candidates(self, driver: WebDriver) -> None:
+        candidates = self._schedule_next_button_candidates(driver)
+        print("InformationAcquisitionModule: next schedule button not found. Candidates:")
+        for index, candidate in enumerate(candidates, start=1):
+            text = self._normalized_visible_text(candidate)
+            outer_html = candidate.get_attribute("outerHTML") or ""
+            print(f"  {index}. text={text!r}, displayed={candidate.is_displayed()}, html={outer_html[:200]!r}")
+
+    def _schedule_next_button_candidates(self, driver: WebDriver) -> list[WebElement]:
+        root = self._find_first(driver, self.locators.schedule_main_selector)
+        if root is None:
+            return []
+
+        return root.find_elements(By.CSS_SELECTOR, self.locators.schedule_next_day_button_selector)
+
+    def _extract_daily_schedule(self, driver: WebDriver) -> dict[str, Any]:
+        self._switch_to_context_with_schedule(driver)
+        header = self._find_first(driver, self.locators.schedule_header_selector)
+        date = self._text_from_optional_element(
+            self._find_first(driver, self.locators.schedule_date_selector)
+        )
+        day_type = self._first_non_date_header_text(header, date)
+
+        rows = self._extract_schedule_rows_with_js(driver)
+        if not rows:
+            rows = []
+            for row in driver.find_elements(By.CSS_SELECTOR, self.locators.schedule_rows_selector):
+                row_data = self._extract_schedule_row(row)
+                if row_data:
+                    rows.append(row_data)
+
+        if not rows:
+            self._print_schedule_row_candidates(driver)
+
+        return {
+            "date": date,
+            "day_type": day_type,
+            "rows": rows,
+        }
+
+    def _wait_for_schedule_rows_or_empty_day(self, driver: WebDriver) -> None:
+        short_wait = WebDriverWait(driver, self.locators.schedule_rows_wait_seconds)
+        try:
+            short_wait.until(lambda active_driver: bool(self._extract_schedule_rows_with_js(active_driver)))
+        except TimeoutException:
+            self.acquisition_status.emit("No schedule rows appeared in the wait window; treating this day as empty.")
+
+    def _switch_to_context_with_schedule(self, driver: WebDriver) -> bool:
+        if self._context_has_schedule_rows(driver):
+            return True
+
+        driver.switch_to.default_content()
+        if self._context_has_schedule_rows(driver):
+            return True
+
+        frames = driver.find_elements(By.CSS_SELECTOR, self.locators.iframe_selector)
+        for frame in frames:
+            driver.switch_to.default_content()
+            driver.switch_to.frame(frame)
+            if self._context_has_schedule_rows(driver):
+                return True
+
+        driver.switch_to.default_content()
+        if self._context_has_schedule_header(driver):
+            return True
+
+        frames = driver.find_elements(By.CSS_SELECTOR, self.locators.iframe_selector)
+        for frame in frames:
+            driver.switch_to.default_content()
+            driver.switch_to.frame(frame)
+            if self._context_has_schedule_header(driver):
+                return True
+
+        driver.switch_to.default_content()
+        return False
+
+    def _context_has_schedule_rows(self, driver: WebDriver) -> bool:
+        return bool(self._extract_schedule_rows_with_js(driver))
+
+    def _context_has_schedule_header(self, driver: WebDriver) -> bool:
+        return bool(driver.find_elements(By.CSS_SELECTOR, self.locators.schedule_date_selector))
+
+    def _current_schedule_date(self, driver: WebDriver) -> str:
+        self._switch_to_context_with_schedule(driver)
+        return self._text_from_optional_element(
+            self._find_first(driver, self.locators.schedule_date_selector)
+        )
+
+    def _extract_schedule_row(self, row: WebElement) -> dict[str, str]:
+        row_data: dict[str, str] = {}
+        for cell in row.find_elements(By.CSS_SELECTOR, self.locators.schedule_cell_selector):
+            heading = (cell.get_attribute("data-heading") or "").strip()
+            if not heading:
+                continue
+            row_data[heading] = (cell.text or cell.get_attribute("textContent") or "").strip()
+
+        return row_data
+
+    def _extract_schedule_rows_with_js(self, driver: WebDriver) -> list[dict[str, str]]:
+        rows = driver.execute_script(
+            """
+            const root = document.querySelector(arguments[0]) || document;
+            return Array.from(root.querySelectorAll('tr'))
+                .map((row) => {
+                    const cells = Array.from(row.querySelectorAll(arguments[1]));
+                    const data = {};
+                    for (const cell of cells) {
+                        const heading = (cell.getAttribute('data-heading') || '').trim();
+                        if (heading) {
+                            data[heading] = (cell.textContent || '').replace(/\\u00a0/g, ' ').trim();
+                        }
+                    }
+                    return data;
+                })
+                .filter((row) => Object.keys(row).length > 0);
+            """,
+            self.locators.schedule_main_selector,
+            self.locators.schedule_cell_selector,
+        )
+        return rows if isinstance(rows, list) else []
+
+    def _print_schedule_row_candidates(self, driver: WebDriver) -> None:
+        row_count = len(driver.find_elements(By.CSS_SELECTOR, "#col-main tr"))
+        td_count = len(driver.find_elements(By.CSS_SELECTOR, "#col-main td"))
+        heading_count = len(driver.find_elements(By.CSS_SELECTOR, "#col-main td[data-heading]"))
+        print(
+            "InformationAcquisitionModule: schedule rows empty.",
+            {
+                "tr_count": row_count,
+                "td_count": td_count,
+                "td_data_heading_count": heading_count,
+            },
+        )
+
+    def _first_non_date_header_text(self, header: WebElement | None, date: str) -> str:
+        if header is None:
+            return ""
+
+        for element in header.find_elements(By.CSS_SELECTOR, self.locators.schedule_day_type_selector):
+            text = (element.text or element.get_attribute("textContent") or "").strip()
+            for line in [item.strip() for item in text.splitlines() if item.strip()]:
+                if line and line != date:
+                    return line
+
+        return ""
 
     def _acquire_grade_details(
         self,
@@ -116,14 +445,14 @@ class InformationAcquisitionModule(QObject):
             return []
 
         self.acquisition_status.emit("Opening grade details.")
-        print("InformationAcquisitionModule: clicking grade details link")
+        # print("InformationAcquisitionModule: clicking grade details link")
         self._click_element(driver, grade_details)
         criteria_container = self._wait_for_criteria_container(wait)
 
         assignments: list[dict[str, str]] = []
         criteria_count = len(criteria_container.find_elements(By.CSS_SELECTOR, self.locators.criteria_item_selector))
         self.acquisition_status.emit(f"Found {criteria_count} criteria groups.")
-        print(f"InformationAcquisitionModule: criteria count = {criteria_count}")
+        # print(f"InformationAcquisitionModule: criteria count = {criteria_count}")
         for criteria_index in range(criteria_count):
             criteria_container = self._find_criteria_container(driver)
             criteria_items = criteria_container.find_elements(By.CSS_SELECTOR, self.locators.criteria_item_selector)
@@ -138,14 +467,14 @@ class InformationAcquisitionModule(QObject):
             if not assignment_type:
                 assignment_type = f"Criteria {criteria_index + 1}"
             self.acquisition_status.emit(f"Opening grade criteria {criteria_index + 1}: {assignment_type}.")
-            print(f"InformationAcquisitionModule: clicking criteria {criteria_index + 1}: {assignment_type}")
+            # print(f"InformationAcquisitionModule: clicking criteria {criteria_index + 1}: {assignment_type}")
             self._click_element(driver, criteria_button)
             grid = self._wait_for_css(wait, self.locators.assignment_grid_selector, f"assignment grid for {assignment_type}")
             criteria_assignments = self._extract_assignments_from_grid(grid, assignment_type)
-            print(
-                "InformationAcquisitionModule:",
-                f"criteria {criteria_index + 1} assignment rows = {len(criteria_assignments)}",
-            )
+            # print(
+            #     "InformationAcquisitionModule:",
+            #     f"criteria {criteria_index + 1} assignment rows = {len(criteria_assignments)}",
+            # )
             assignments.extend(criteria_assignments)
 
         self.acquisition_status.emit("Closing grade details.")
@@ -178,10 +507,10 @@ class InformationAcquisitionModule(QObject):
         )
         self._click_element(driver, close_button)
         wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, self.locators.criteria_container_selector)))
-        print("InformationAcquisitionModule: closed grade details")
+        # print("InformationAcquisitionModule: closed grade details")
 
     def _wait_for_criteria_container(self, wait: WebDriverWait) -> WebElement:
-        print("InformationAcquisitionModule: waiting for criteria container")
+        # print("InformationAcquisitionModule: waiting for criteria container")
 
         def condition(driver: WebDriver) -> WebElement | bool:
             container = self._find_criteria_container_in_current_context(driver)
@@ -201,12 +530,12 @@ class InformationAcquisitionModule(QObject):
         for selector in selectors:
             elements = driver.find_elements(By.CSS_SELECTOR, selector)
             if elements:
-                print(f"InformationAcquisitionModule: criteria container matched CSS: {selector}")
+                # print(f"InformationAcquisitionModule: criteria container matched CSS: {selector}")
                 return elements[0]
 
         elements = driver.find_elements(By.XPATH, self.locators.criteria_container_xpath)
         if elements:
-            print(f"InformationAcquisitionModule: criteria container matched XPath: {self.locators.criteria_container_xpath}")
+            # print(f"InformationAcquisitionModule: criteria container matched XPath: {self.locators.criteria_container_xpath}")
             return elements[0]
 
         return None
@@ -221,20 +550,20 @@ class InformationAcquisitionModule(QObject):
     def _switch_to_frame_with_criteria_container(self, driver: WebDriver) -> WebElement | None:
         driver.switch_to.default_content()
         frames = driver.find_elements(By.CSS_SELECTOR, self.locators.iframe_selector)
-        print(f"InformationAcquisitionModule: scanning {len(frames)} iframe(s) for criteria container")
+        # print(f"InformationAcquisitionModule: scanning {len(frames)} iframe(s) for criteria container")
         for index, frame in enumerate(frames, start=1):
             driver.switch_to.default_content()
             driver.switch_to.frame(frame)
             container = self._find_criteria_container_in_current_context(driver)
             if container is not None:
-                print(f"InformationAcquisitionModule: criteria container found in iframe {index}")
+                # print(f"InformationAcquisitionModule: criteria container found in iframe {index}")
                 return container
 
         driver.switch_to.default_content()
         return None
 
     def _wait_for_css(self, wait: WebDriverWait, selector: str, label: str) -> WebElement:
-        print(f"InformationAcquisitionModule: waiting for {label}: {selector}")
+        # print(f"InformationAcquisitionModule: waiting for {label}: {selector}")
         return wait.until(
             EC.presence_of_element_located((By.CSS_SELECTOR, selector)),
             message=f"Timed out waiting for {label}: {selector}",
@@ -250,14 +579,14 @@ class InformationAcquisitionModule(QObject):
     def _find_criteria_button(self, criteria_item: WebElement, criteria_number: int) -> WebElement | None:
         buttons = criteria_item.find_elements(By.CSS_SELECTOR, self.locators.criteria_button_selector)
         if buttons:
-            print(f"InformationAcquisitionModule: criteria {criteria_number} button count = {len(buttons)}")
+            # print(f"InformationAcquisitionModule: criteria {criteria_number} button count = {len(buttons)}")
             return buttons[0]
 
-        outer_html = criteria_item.get_attribute("outerHTML") or ""
-        print(
-            f"InformationAcquisitionModule: criteria {criteria_number} has no button. "
-            f"outerHTML starts with: {outer_html[:300]}"
-        )
+        # outer_html = criteria_item.get_attribute("outerHTML") or ""
+        # print(
+        #     f"InformationAcquisitionModule: criteria {criteria_number} has no button. "
+        #     f"outerHTML starts with: {outer_html[:300]}"
+        # )
         return None
 
     def _dismiss_welcome_if_present(self, driver: WebDriver) -> None:
@@ -296,8 +625,25 @@ class InformationAcquisitionModule(QObject):
 
         return (element.text or element.get_attribute("textContent") or "").strip()
 
+    def _text_from_optional_element(self, element: WebElement | None) -> str:
+        if element is None:
+            return ""
+
+        return (element.text or element.get_attribute("textContent") or "").strip()
+
+    def _normalized_visible_text(self, element: WebElement) -> str:
+        text = element.text or element.get_attribute("textContent") or ""
+        return " ".join(text.replace("\xa0", " ").split())
+
     def _find_optional(self, row: WebElement, selector: str) -> WebElement | None:
         elements = row.find_elements(By.CSS_SELECTOR, selector)
+        return elements[0] if elements else None
+
+    def _find_first(self, root: WebDriver | WebElement | None, selector: str) -> WebElement | None:
+        if root is None:
+            return None
+
+        elements = root.find_elements(By.CSS_SELECTOR, selector)
         return elements[0] if elements else None
 
     def _find_grade_details_link(self, row: WebElement) -> WebElement | None:

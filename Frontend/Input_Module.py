@@ -22,7 +22,7 @@ class UserInputModule(QObject):
     auto_login_changed = pyqtSignal(bool)
     login_request_accepted = pyqtSignal(str, str)
     logout_requested = pyqtSignal()
-    refresh_request_accepted = pyqtSignal()
+    refresh_request_accepted = pyqtSignal(str, int)
     settings_requested = pyqtSignal()
     validation_failed = pyqtSignal(str)
     status_changed = pyqtSignal(str)
@@ -72,13 +72,15 @@ class UserInputModule(QObject):
         self.logout_requested.emit()
         self.status_changed.emit("Logged out. Auto login is disabled.")
 
-    def request_refresh(self) -> None:
+    def request_refresh(self, refresh_mode: str = "both", schedule_day_count: int = 1) -> None:
         if not self.is_logged_in:
             self.validation_failed.emit("Please login before refreshing academic information.")
             return
 
-        self.refresh_request_accepted.emit()
-        self.status_changed.emit("Refresh request accepted.")
+        refresh_mode = self._normalize_refresh_mode(refresh_mode)
+        schedule_day_count = self._normalize_schedule_day_count(schedule_day_count)
+        self.refresh_request_accepted.emit(refresh_mode, schedule_day_count)
+        self.status_changed.emit(f"Refresh request accepted: {refresh_mode}, {schedule_day_count} schedule day(s).")
 
     def _handle_login_success(self, user_settings: dict) -> None:
         self.is_logged_in = True
@@ -136,3 +138,17 @@ class UserInputModule(QObject):
 
     def _default_settings_path(self) -> Path:
         return Path(__file__).resolve().parents[1] / "Storage" / "User_setting.js"
+
+    def _normalize_refresh_mode(self, refresh_mode: str) -> str:
+        if refresh_mode in {"assignments", "schedule", "both"}:
+            return refresh_mode
+
+        return "both"
+
+    def _normalize_schedule_day_count(self, schedule_day_count: int) -> int:
+        try:
+            value = int(schedule_day_count)
+        except (TypeError, ValueError):
+            return 1
+
+        return max(1, min(value, 31))

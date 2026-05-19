@@ -72,12 +72,16 @@ class AuthenticationModule(QObject):
         if self.driver is None:
             return
 
-        self.driver.quit()
+        try:
+            self.driver.quit()
+        except WebDriverException:
+            pass
         self.driver = None
 
     def _run_login_flow(self, username: str, password: str) -> None:
         try:
             self._validate_locator_config()
+            self.close_driver()
             driver = self._create_driver()
             wait = WebDriverWait(driver, self.timeout_seconds)
 
