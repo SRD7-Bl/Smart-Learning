@@ -8,6 +8,7 @@ connected.
 from __future__ import annotations
 
 import sys
+from datetime import date, datetime
 from typing import Any
 
 from Backend.Data_Access import DataAccessModule
@@ -220,6 +221,7 @@ class SmartLearningWindow(QMainWindow):
         self.status_error_display = status_error_display or StatusErrorDisplayModule(self, self)
         self.status_error_display.set_dialog_parent(self)
         self.current_courses: list[dict[str, Any]] = []
+        self.current_schedule_days: list[dict[str, Any]] = []
 
         self.setWindowTitle("Smart Learning")
         self.setMinimumSize(980, 680)
@@ -459,6 +461,19 @@ class SmartLearningWindow(QMainWindow):
 
         self.schedule_group = QGroupBox("Schedule")
         schedule_group_layout = QVBoxLayout(self.schedule_group)
+
+        schedule_picker = QHBoxLayout()
+        self.schedule_day_selector = QComboBox()
+        self.schedule_day_selector.setMinimumWidth(320)
+        self.schedule_day_selector.currentIndexChanged.connect(self._select_schedule_day)
+        self.schedule_day_meta_label = QLabel()
+        self.schedule_day_meta_label.setObjectName("mutedText")
+        schedule_picker.addWidget(QLabel("Day"))
+        schedule_picker.addWidget(self.schedule_day_selector)
+        schedule_picker.addWidget(self.schedule_day_meta_label)
+        schedule_picker.addStretch(1)
+        schedule_group_layout.addLayout(schedule_picker)
+
         self.schedule_list = QWidget()
         self.schedule_list_layout = QVBoxLayout(self.schedule_list)
         self.schedule_list_layout.setContentsMargins(0, 0, 0, 0)
@@ -884,13 +899,59 @@ class SmartLearningWindow(QMainWindow):
         return frame
 
     def _render_schedule(self, schedule_days: list[dict[str, Any]]) -> None:
+        self.current_schedule_days = []
+        self.schedule_day_selector.blockSignals(True)
+        self.schedule_day_selector.clear()
+        self.schedule_day_selector.blockSignals(False)
+        self.schedule_day_meta_label.clear()
+
         if not schedule_days:
             self.schedule_list_layout.addWidget(QLabel("No schedule information available."))
             return
 
-        for day in schedule_days:
-            self.schedule_list_layout.addWidget(self._schedule_day_section(day))
+        self.current_schedule_days = schedule_days
+        self.schedule_day_selector.blockSignals(True)
+        for index, day in enumerate(schedule_days):
+            self.schedule_day_selector.addItem(self._schedule_day_label(day, index), index)
+        self.schedule_day_selector.blockSignals(False)
+
+        self.schedule_day_selector.setCurrentIndex(self._today_schedule_index(schedule_days))
+        self._select_schedule_day(self.schedule_day_selector.currentIndex())
+
+    def _select_schedule_day(self, index: int) -> None:
+        self._clear_layout(self.schedule_list_layout)
+        if index < 0 or index >= len(self.current_schedule_days):
+            self.schedule_day_meta_label.clear()
+            return
+
+        day = self.current_schedule_days[index]
+        self.schedule_day_meta_label.setText(str(day.get("day_type", "")))
+        self.schedule_list_layout.addWidget(self._schedule_day_section(day))
         self.schedule_list_layout.addStretch(1)
+
+    def _schedule_day_label(self, day: dict[str, Any], index: int) -> str:
+        day_index = day.get("day_index", index + 1)
+        date_text = str(day.get("date", "Date unavailable"))
+        return f"Day {day_index} - {date_text}"
+
+    def _today_schedule_index(self, schedule_days: list[dict[str, Any]]) -> int:
+        today = date.today()
+        for index, day in enumerate(schedule_days):
+            parsed_date = self._parse_schedule_date(day.get("date", ""))
+            if parsed_date == today:
+                return index
+
+        return 0
+
+    def _parse_schedule_date(self, value: Any) -> date | None:
+        text = str(value).strip()
+        for date_format in ("%Y-%m-%d", "%A, %B %d, %Y", "%A, %b %d, %Y"):
+            try:
+                return datetime.strptime(text, date_format).date()
+            except ValueError:
+                continue
+
+        return None
 
     def _schedule_day_section(self, day: dict[str, Any]) -> QFrame:
         frame = QFrame()
@@ -931,19 +992,88 @@ class SmartLearningWindow(QMainWindow):
         time.setObjectName("sectionTitle")
         course_name = QLabel(str(item.get("course_name", item.get("title", "Course unavailable"))))
         course_name.setObjectName("sectionTitle")
+        course_name.setWordWrap(True)
         block = QLabel(f"Block: {item.get('block', 'N/A')}")
         teacher = QLabel(f"Teacher: {item.get('teacher', 'Unavailable')}")
         teacher.setObjectName("mutedText")
-        detail = QLabel(str(item.get("detail", "No details available")))
-        detail.setWordWrap(True)
 
         layout.addWidget(time, 0, 0)
         layout.addWidget(course_name, 0, 1)
         layout.addWidget(block, 0, 2)
         layout.addWidget(teacher, 1, 1)
-        layout.addWidget(detail, 2, 1, 1, 2)
+        detail_fields = self._schedule_detail_fields(item)
+        if detail_fields:
+            detail_layout = QGridLayout()
+            detail_layout.setHorizontalSpacing(14)
+            detail_layout.setVerticalSpacing(4)
+            for row, (label, value) in enumerate(detail_fields):
+                key_label = QLabel(label)
+                key_label.setObjectName("mutedText")
+                value_label = QLabel(value)
+                value_label.setWordWrap(True)
+                detail_layout.addWidget(key_label, row, 0)
+                detail_layout.addWidget(value_label, row, 1)
+            detail_layout.setColumnStretch(1, 1)
+            layout.addLayout(detail_layout, 2, 1, 1, 2)
         layout.setColumnStretch(1, 1)
         return frame
+
+    def _schedule_detail_fields(self, item: dict[str, Any]) -> list[tuple[str, str]]:
+        fields = item.get("fields", {})
+        details: list[tuple[str, str]] = []
+        if isinstance(fields, dict):
+            ignored_keys = {"time", "block", "course_name", "course", "activity", "acivity", "title", "teacher"}
+            preferred_keys = ("attendance", "attandance", "contact", "details", "detail", "location", "room")
+            used_keys = set()
+            for key in preferred_keys:
+                value = self._field_text(fields.get(key, ""))
+                if value:
+                    details.append((self._schedule_field_label(key), value))
+                    used_keys.add(key)
+
+            for key, value in fields.items():
+                normalized_key = str(key)
+                if normalized_key in ignored_keys or normalized_key in used_keys:
+                    continue
+
+                text = self._field_text(value)
+                if text:
+                    details.append((self._schedule_field_label(normalized_key), text))
+
+        if details:
+            return details
+
+        detail_text = self._field_text(item.get("detail", ""))
+        return self._parse_detail_text(detail_text) if detail_text else []
+
+    def _parse_detail_text(self, detail_text: str) -> list[tuple[str, str]]:
+        details = []
+        for part in detail_text.split(";"):
+            if ":" not in part:
+                continue
+            key, value = part.split(":", 1)
+            key = key.strip()
+            value = value.strip()
+            if key and value:
+                details.append((self._schedule_field_label(key), value))
+
+        return details or [("Details", detail_text)]
+
+    def _schedule_field_label(self, key: str) -> str:
+        label_map = {
+            "attandance": "Attendance",
+            "attendance": "Attendance",
+            "contact": "Contact",
+            "details": "Details",
+            "detail": "Details",
+            "location": "Location",
+            "room": "Room",
+        }
+        normalized_key = str(key).strip().lower()
+        return label_map.get(normalized_key, normalized_key.replace("_", " ").title())
+
+    def _field_text(self, value: Any) -> str:
+        return "" if value is None else str(value).strip()
 
     def _clear_layout(self, layout: QVBoxLayout | QHBoxLayout | QGridLayout) -> None:
         while layout.count():

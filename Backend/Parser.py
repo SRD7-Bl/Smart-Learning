@@ -13,6 +13,7 @@ class ParserModule(QObject):
     """Parse raw course dictionaries from Data Acquisition into rough academic data."""
 
     parsing_succeeded = pyqtSignal(dict)
+    schedule_parsing_succeeded = pyqtSignal(dict)
     parsing_failed = pyqtSignal(str)
     parsing_status = pyqtSignal(str)
 
@@ -49,6 +50,75 @@ class ParserModule(QObject):
                 courses.append(course)
 
         return {"courses": courses}
+
+    def parse_schedule_info(self, raw_schedule_info: dict[str, Any]) -> None:
+        """Parse acquired schedule dictionaries and print the rough JS-like structure."""
+        try:
+            parsed = self.parse_schedule(raw_schedule_info)
+        except (TypeError, ValueError) as error:
+            self.parsing_failed.emit(f"Schedule parser failed: {error}")
+            return
+
+        print("ParserModule rough schedule info:")
+        print(json.dumps(parsed, ensure_ascii=False, indent=2))
+        self.parsing_status.emit(f"Parsed {len(parsed.get('schedule_days', []))} schedule day(s).")
+        self.schedule_parsing_succeeded.emit(parsed)
+
+    def parse_schedule(self, raw_schedule_info: dict[str, Any]) -> dict[str, Any]:
+        """Return cleaned schedule data without saving it."""
+        if not isinstance(raw_schedule_info, dict):
+            raise TypeError("raw schedule data must be a dictionary.")
+
+        raw_days = raw_schedule_info.get("schedule_days", [])
+        if not isinstance(raw_days, list):
+            raise TypeError("raw schedule_days must be a list.")
+
+        schedule_days = []
+        for raw_day in raw_days:
+            if not isinstance(raw_day, dict):
+                continue
+
+            schedule_days.append(self._parse_schedule_day(raw_day))
+
+        return {"schedule_days": schedule_days}
+
+    def _parse_schedule_day(self, raw_day: dict[str, Any]) -> dict[str, Any]:
+        rows = raw_day.get("rows", [])
+        classes = []
+        if isinstance(rows, list):
+            for raw_row in rows:
+                if not isinstance(raw_row, dict):
+                    continue
+
+                classes.append(self._parse_schedule_class(raw_row))
+
+        return {
+            "date": self._clean_text(raw_day.get("date", "")),
+            "day_type": self._clean_schedule_day_type(raw_day.get("day_type", "")),
+            "day_index": raw_day.get("day_index"),
+            "classes": classes,
+        }
+
+    def _parse_schedule_class(self, raw_row: dict[str, Any]) -> dict[str, Any]:
+        fields = {
+            self._normalize_schedule_heading(heading): self._clean_text(value)
+            for heading, value in raw_row.items()
+            if self._normalize_schedule_heading(heading)
+        }
+        course_name = self._first_present_field(
+            fields,
+            ("course_name", "course", "activity", "acivity", "title", "description"),
+        )
+        detail = self._schedule_detail(fields)
+
+        return {
+            "time": fields.get("time", ""),
+            "block": fields.get("block", ""),
+            "course_name": course_name,
+            "teacher": fields.get("teacher", ""),
+            "detail": detail,
+            "fields": fields,
+        }
 
     def _parse_course(self, raw_course: dict[str, Any]) -> dict[str, Any]:
         assignments = []
@@ -135,6 +205,36 @@ class ParserModule(QObject):
     def _clean_text(self, value: Any) -> str:
         text = "" if value is None else str(value)
         return re.sub(r"[ \t]+", " ", text.replace("\r\n", "\n").replace("\r", "\n")).strip()
+
+    def _clean_schedule_day_type(self, value: Any) -> str:
+        return self._clean_text(value).lstrip("-").strip()
+
+    def _normalize_schedule_heading(self, heading: Any) -> str:
+        text = self._clean_text(heading).lower()
+        text = re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+        return text
+
+    def _first_present_field(self, fields: dict[str, str], candidates: tuple[str, ...]) -> str:
+        for candidate in candidates:
+            value = fields.get(candidate, "")
+            if value:
+                return value
+
+        return ""
+
+    def _schedule_detail(self, fields: dict[str, str]) -> str:
+        detail_keys = ("detail", "location", "room", "notes")
+        explicit_detail = self._first_present_field(fields, detail_keys)
+        if explicit_detail:
+            return explicit_detail
+
+        core_keys = {"time", "block", "course_name", "course", "activity", "acivity", "title", "teacher"}
+        extra_parts = [
+            f"{key}: {value}"
+            for key, value in fields.items()
+            if key not in core_keys and value
+        ]
+        return "; ".join(extra_parts)
 
     def _number_or_none(self, value: str | None) -> float | None:
         if value in (None, ""):

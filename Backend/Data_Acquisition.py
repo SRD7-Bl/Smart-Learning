@@ -103,7 +103,8 @@ class InformationAcquisitionModule(QObject):
             wait = WebDriverWait(driver, self.timeout_seconds)
             self._dismiss_welcome_if_present(driver)
             if include_schedule:
-                self._acquire_schedule_days(driver, wait, schedule_day_count)
+                schedule = self._acquire_schedule_days(driver, wait, schedule_day_count)
+                self.schedule_info_acquired.emit(schedule)
 
             self.acquisition_status.emit("Opening Progress tab.")
             progress_tab = wait.until(

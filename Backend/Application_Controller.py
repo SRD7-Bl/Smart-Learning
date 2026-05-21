@@ -43,6 +43,7 @@ class ApplicationController(QObject):
         self._pending_login_credentials: tuple[str, str] | None = None
         self._pending_refresh_mode = "both"
         self._pending_schedule_day_count = 1
+        self._pending_parsed_schedule: dict | None = None
         self._connect_modules()
 
     def _connect_modules(self) -> None:
@@ -56,6 +57,7 @@ class ApplicationController(QObject):
         self.acquisition_module.acquisition_failed.connect(self.error_handler.handle_pipeline_error)
         self.acquisition_module.acquisition_status.connect(self.controller_status.emit)
         self.parser_module.parsing_succeeded.connect(self._handle_parsed_course_info)
+        self.parser_module.schedule_parsing_succeeded.connect(self._handle_parsed_schedule_info)
         self.parser_module.parsing_failed.connect(self.error_handler.handle_pipeline_error)
         self.parser_module.parsing_status.connect(self.controller_status.emit)
         self.processor_module.processing_succeeded.connect(self._finish_refresh)
@@ -71,6 +73,7 @@ class ApplicationController(QObject):
     def handle_refresh_request(self, refresh_mode: str = "both", schedule_day_count: int = 1) -> None:
         self._pending_refresh_mode = self._normalize_refresh_mode(refresh_mode)
         self._pending_schedule_day_count = self._normalize_schedule_day_count(schedule_day_count)
+        self._pending_parsed_schedule = None
         self.controller_status.emit(f"AC received refresh request: {self._pending_refresh_mode}. Starting authentication.")
         self.authentication_module.request_authentication()
 
@@ -107,8 +110,18 @@ class ApplicationController(QObject):
         )
 
     def _handle_schedule_info_acquired(self, schedule: dict) -> None:
-        self.controller_status.emit("Schedule acquired. Reloading local academic information.")
-        self.processor_module.run_placeholder_pipeline()
+        self.controller_status.emit("Schedule acquired. Parsing schedule information.")
+        self.parser_module.parse_schedule_info(schedule)
+
+    def _handle_parsed_schedule_info(self, schedule_info: dict) -> None:
+        day_count = len(schedule_info.get("schedule_days", []))
+        self.controller_status.emit(f"Parsed {day_count} schedule day(s).")
+        if self._pending_refresh_mode == "both":
+            self._pending_parsed_schedule = schedule_info
+            return
+
+        self.controller_status.emit("Running schedule data processing pipeline.")
+        self.processor_module.process_academic_info(schedule_info)
 
     def _handle_course_info_acquired(self, courses: list) -> None:
         self.controller_status.emit(f"Acquired {len(courses)} course cards. Parsing course information.")
@@ -117,6 +130,13 @@ class ApplicationController(QObject):
     def _handle_parsed_course_info(self, academic_info: dict) -> None:
         course_count = len(academic_info.get("courses", []))
         self.controller_status.emit(f"Parsed {course_count} course(s). Running data processing pipeline.")
+        if self._pending_parsed_schedule:
+            academic_info = {
+                **academic_info,
+                "schedule_days": self._pending_parsed_schedule.get("schedule_days", []),
+            }
+            self._pending_parsed_schedule = None
+
         self.processor_module.process_academic_info(academic_info)
 
     def _finish_refresh(self, academic_info: dict) -> None:
@@ -133,6 +153,7 @@ class ApplicationController(QObject):
             self.login_failed.emit(message)
             return
 
+        self._pending_parsed_schedule = None
         self.authentication_module.close_driver()
         self.refresh_failed.emit(message)
 

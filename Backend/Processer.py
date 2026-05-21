@@ -50,7 +50,18 @@ class DataProcessingModule(QObject):
             raise TypeError("parsed academic info must be a dictionary.")
 
         existing_info = self._load_existing_academic_info()
-        courses = self._process_courses(parsed_academic_info.get("courses", []))
+        has_courses = "courses" in parsed_academic_info
+        has_schedule = "schedule_days" in parsed_academic_info
+        courses = (
+            self._process_courses(parsed_academic_info.get("courses", []))
+            if has_courses
+            else existing_info.get("courses", [])
+        )
+        schedule_days = (
+            self._process_schedule_days(parsed_academic_info.get("schedule_days", []))
+            if has_schedule
+            else existing_info.get("schedule_days", existing_info.get("schedule", []))
+        )
         now = datetime.now().astimezone().isoformat(timespec="seconds")
 
         return {
@@ -63,7 +74,7 @@ class DataProcessingModule(QObject):
                 "graded_assignments": self._count_assignments_by_status(courses, "graded"),
                 "not_graded_assignments": self._count_assignments_by_status(courses, "not_graded"),
             },
-            "schedule_days": existing_info.get("schedule_days", existing_info.get("schedule", [])),
+            "schedule_days": schedule_days,
             "courses": courses,
         }
 
@@ -115,6 +126,46 @@ class DataProcessingModule(QObject):
             assignments.append(assignment)
 
         return assignments
+
+    def _process_schedule_days(self, raw_schedule_days: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw_schedule_days, list):
+            return []
+
+        schedule_days = []
+        for raw_day in raw_schedule_days:
+            if not isinstance(raw_day, dict):
+                continue
+
+            day = {
+                "date": self._clean_text(raw_day.get("date")) or "Date unavailable",
+                "day_type": self._clean_text(raw_day.get("day_type")) or "Day type unavailable",
+                "day_index": raw_day.get("day_index"),
+                "classes": self._process_schedule_classes(raw_day.get("classes", [])),
+            }
+            schedule_days.append(day)
+
+        return schedule_days
+
+    def _process_schedule_classes(self, raw_classes: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw_classes, list):
+            return []
+
+        classes = []
+        for raw_class in raw_classes:
+            if not isinstance(raw_class, dict):
+                continue
+
+            item = {
+                "time": self._clean_text(raw_class.get("time")) or "Time unavailable",
+                "course_name": self._clean_text(raw_class.get("course_name")) or "Activity unavailable",
+                "block": self._clean_text(raw_class.get("block")) or "N/A",
+                "teacher": self._clean_text(raw_class.get("teacher")) or "Unavailable",
+                "detail": self._clean_text(raw_class.get("detail")) or "No details available",
+                "fields": raw_class.get("fields", {}) if isinstance(raw_class.get("fields", {}), dict) else {},
+            }
+            classes.append(item)
+
+        return classes
 
     def _count_assignments_by_status(self, courses: list[dict[str, Any]], status: str) -> int:
         return sum(
