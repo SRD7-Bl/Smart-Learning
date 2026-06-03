@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from Backend.Encryption import EncryptionService
+from Backend.Storage_Paths import default_storage_dir
 from Frontend.qt_compat import QObject, pyqtSignal
 
 
@@ -27,9 +28,10 @@ class DataAccessModule(QObject):
         storage_dir: Path | None = None,
     ) -> None:
         super().__init__(parent)
-        self.storage_dir = storage_dir or Path(__file__).resolve().parents[1] / "Storage"
+        self.storage_dir = storage_dir or default_storage_dir()
         self.user_settings_path = self.storage_dir / "User_setting.js"
         self.academic_info_path = self.storage_dir / "Academic_info.js"
+        self._ensure_storage_files()
         self.encryption_service = EncryptionService(self.storage_dir / ".sl_key")
 
     def request_user_settings(self) -> None:
@@ -42,6 +44,7 @@ class DataAccessModule(QObject):
         self._print_user_settings_summary(user_settings)
         self.user_settings_loaded.emit(user_settings)
 
+    """获取登录信息"""
     def request_auth_credentials(self) -> None:
         try:
             user_settings = self._read_user_settings()
@@ -59,6 +62,7 @@ class DataAccessModule(QObject):
         self._print_user_settings_summary(user_settings)
         self.auth_credentials_loaded.emit(student_id, password)
 
+    """更新(用户修改了)登录信息"""
     def update_auth_credentials(self, username: str, password: str) -> None:
         username = username.strip()
         if not username or not password:
@@ -78,6 +82,7 @@ class DataAccessModule(QObject):
 
         self.auth_credentials_updated.emit()
 
+    """中转函数：获取学术信息"""
     def request_academic_info(self) -> None:
         try:
             academic_info = self._read_academic_info()
@@ -90,7 +95,8 @@ class DataAccessModule(QObject):
 
     def load_academic_info_snapshot(self) -> dict[str, Any]:
         return self._read_academic_info()
-
+    
+    """保存学术信息"""
     def save_academic_info(self, academic_info: dict[str, Any]) -> None:
         if not isinstance(academic_info, dict):
             self.data_access_failed.emit("Academic info must be a JSON object before saving.")
@@ -103,7 +109,8 @@ class DataAccessModule(QObject):
             return
 
         self.academic_info_saved.emit()
-
+    
+    """调试函数：同时获取所有信息"""
     def request_all_data(self) -> None:
         try:
             user_settings = self._read_user_settings()
@@ -126,6 +133,13 @@ class DataAccessModule(QObject):
         except ValueError as error:
             self.data_access_failed.emit(str(error))
 
+    def _ensure_storage_files(self) -> None:
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        if not self.user_settings_path.exists() or self.user_settings_path.stat().st_size == 0:
+            self._write_json_file(self.user_settings_path, {"auto_login": False})
+        if not self.academic_info_path.exists() or self.academic_info_path.stat().st_size == 0:
+            self._write_json_file(self.academic_info_path, {})
+
     def _read_json_file(self, path: Path) -> dict[str, Any]:
         if not path.exists():
             raise ValueError(f"Local data file does not exist: {path.name}")
@@ -146,6 +160,7 @@ class DataAccessModule(QObject):
 
         return data
 
+    """解密User Setting"""
     def _read_user_settings(self) -> dict[str, Any]:
         user_settings = self._read_json_file(self.user_settings_path)
         encrypted_auth = user_settings.get("auth_encrypted")
@@ -154,6 +169,7 @@ class DataAccessModule(QObject):
 
         return user_settings
 
+    """解密key academic info."""
     def _read_academic_info(self) -> dict[str, Any]:
         academic_info = self._read_json_file(self.academic_info_path)
         if academic_info.get("encrypted") is True:
@@ -184,12 +200,14 @@ class DataAccessModule(QObject):
 
     def _write_json_file(self, path: Path, data: dict[str, Any]) -> None:
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("w", encoding="utf-8") as data_file:
                 json.dump(data, data_file, indent=2, ensure_ascii=False)
                 data_file.write("\n")
         except OSError as error:
             raise ValueError(f"Local data file could not be written: {path.name}") from error
 
+    """两个测试使用的函数"""
     def _print_user_settings_summary(self, user_settings: dict[str, Any]) -> None:
         student = user_settings.get("student", {})
         print(

@@ -263,6 +263,14 @@ class SmartLearningWindow(QMainWindow):
                 font-size: 16px;
                 font-weight: 700;
             }
+            QLabel#loginNotice {
+                background: #fff4d8;
+                border: 1px solid #e1ad3d;
+                border-radius: 6px;
+                color: #5f3b00;
+                font-weight: 700;
+                padding: 8px 10px;
+            }
             QLabel#mutedText {
                 color: #667085;
             }
@@ -361,6 +369,7 @@ class SmartLearningWindow(QMainWindow):
             """
         )
 
+    '''因为有3个tab，因此分开渲染，这里是顶部不变的展示条'''
     def _build_header(self) -> QWidget:
         header = QWidget()
         layout = QHBoxLayout(header)
@@ -409,7 +418,9 @@ class SmartLearningWindow(QMainWindow):
             self.schedule_day_count_selector.addItem(f"{day_count} day(s)", day_count)
         self.schedule_day_count_selector.setMinimumWidth(120)
         self.update_auth_button = QPushButton("Change Email/Password")
-        self.test_data_access_button = QPushButton("Test Data Access")
+        self.login_notice = QLabel("请使用与 TigerNet 登录相同的账号和密码")
+        self.login_notice.setObjectName("loginNotice")
+        self.login_notice.setWordWrap(True)
 
         layout.addWidget(QLabel("Student ID"), 0, 0)
         layout.addWidget(self.student_id_input, 0, 1)
@@ -421,7 +432,7 @@ class SmartLearningWindow(QMainWindow):
         layout.addWidget(self.schedule_day_count_selector, 0, 7)
         layout.addWidget(self.refresh_button, 0, 8)
         layout.addWidget(self.update_auth_button, 1, 2, 1, 2)
-        layout.addWidget(self.test_data_access_button, 1, 4, 1, 5)
+        layout.addWidget(self.login_notice, 1, 4, 1, 5)
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(3, 1)
         return panel
@@ -429,6 +440,7 @@ class SmartLearningWindow(QMainWindow):
     def _build_content_area(self) -> QTabWidget:
         self.tabs = QTabWidget()
 
+        #一共有3个tab
         self.basic_tab = self._build_basic_tab()
         self.schedule_tab = self._build_schedule_tab()
         self.course_tab = self._build_course_tab()
@@ -439,6 +451,7 @@ class SmartLearningWindow(QMainWindow):
         self.tabs.setCurrentIndex(1)
         return self.tabs
 
+    #info tab：账号管理以及刷新等信息
     def _build_basic_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -540,7 +553,6 @@ class SmartLearningWindow(QMainWindow):
         self.logout_button.clicked.connect(self.input_module.request_logout)
         self.login_button.clicked.connect(self._send_login_input)
         self.update_auth_button.clicked.connect(self._update_auth_credentials)
-        self.test_data_access_button.clicked.connect(self.data_access_module.request_all_data)
         self.input_module.content_access_changed.connect(self._set_content_access)
         self.input_module.validation_failed.connect(self.status_error_display.display_error)
         self.input_module.status_changed.connect(self.status_error_display.display_status)

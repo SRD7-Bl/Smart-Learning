@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from Backend.Storage_Paths import default_storage_dir
 from Frontend.Request_Module import RequestSendingModule
 from Frontend.qt_compat import QObject, pyqtSignal
 
@@ -137,7 +138,7 @@ class UserInputModule(QObject):
             self.validation_failed.emit("Auto login setting could not be updated.")
 
     def _default_settings_path(self) -> Path:
-        return Path(__file__).resolve().parents[1] / "Storage" / "User_setting.js"
+        return default_storage_dir() / "User_setting.js"
 
     def _normalize_refresh_mode(self, refresh_mode: str) -> str:
         if refresh_mode in {"assignments", "schedule", "both"}:

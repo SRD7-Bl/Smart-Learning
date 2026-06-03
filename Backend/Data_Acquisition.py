@@ -14,7 +14,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from Frontend.qt_compat import QObject, pyqtSignal
 
-
+"""存储所有的标签和id名的class"""
 @dataclass(frozen=True)
 class CourseAcquisitionLocators:
     """Editable locators for the Progress course cards."""
@@ -78,6 +78,7 @@ class InformationAcquisitionModule(QObject):
         self.locators = locators or CourseAcquisitionLocators()
         self.timeout_seconds = timeout_seconds
 
+    """两个接口函数: authentication succeed -> send signal to AC -> AC triggles this function"""
     def acquire_schedule_info(self, driver: WebDriver, day_count: int = 1) -> None:
         try:
             driver.switch_to.default_content()
@@ -141,6 +142,7 @@ class InformationAcquisitionModule(QObject):
 
         self.course_info_acquired.emit(courses)
 
+    """Schedule部分的脚本"""
     def _acquire_schedule_days(
         self,
         driver: WebDriver,
@@ -148,19 +150,23 @@ class InformationAcquisitionModule(QObject):
         day_count: int,
     ) -> dict[str, Any]:
         schedules = []
+        """先获取需要获取的schedule的天数"""
         try:
             normalized_day_count = max(1, int(day_count))
         except (TypeError, ValueError):
             normalized_day_count = 1
+        
         for day_index in range(normalized_day_count):
-            schedule = self._acquire_daily_schedule(driver, wait, day_index + 1)
+            """对于每一天获取daily schedule"""
+            schedule = self._acquire_daily_schedule(driver, wait, day_index + 1) 
             if schedule:
-                schedules.append(schedule)
+                schedules.append(schedule) #追加到结果list
 
             if day_index >= normalized_day_count - 1:
                 break
-
+            
             current_date = schedule.get("date", "") if schedule else ""
+            """找下一天的按钮"""
             if not self._go_to_next_schedule_day(driver, wait, current_date):
                 self.acquisition_status.emit("Could not find the next schedule day button; stopping schedule acquisition.")
                 break
@@ -182,12 +188,14 @@ class InformationAcquisitionModule(QObject):
         except TimeoutException:
             self.acquisition_status.emit("Schedule container was not found; continuing to assignment acquisition.")
             return {}
-
+        """有些天可能是blank，没有任何schedule"""
         self._wait_for_schedule_rows_or_empty_day(driver)
+        """获取daily schedule"""
         schedule = self._extract_daily_schedule(driver)
         schedule["day_index"] = day_number
         return schedule
 
+    """查找next day button"""
     def _go_to_next_schedule_day(self, driver: WebDriver, wait: WebDriverWait, current_date: str) -> bool:
         next_button = self._find_next_schedule_day_button(driver)
         if next_button is not None:
@@ -288,6 +296,7 @@ class InformationAcquisitionModule(QObject):
             )
         )
 
+    """接下来两个function是调试用的，如果找不到next button则在控制台输出候选人"""
     def _print_schedule_button_candidates(self, driver: WebDriver) -> None:
         candidates = self._schedule_next_button_candidates(driver)
         print("InformationAcquisitionModule: next schedule button not found. Candidates:")
@@ -302,7 +311,7 @@ class InformationAcquisitionModule(QObject):
             return []
 
         return root.find_elements(By.CSS_SELECTOR, self.locators.schedule_next_day_button_selector)
-
+    
     def _extract_daily_schedule(self, driver: WebDriver) -> dict[str, Any]:
         self._switch_to_context_with_schedule(driver)
         header = self._find_first(driver, self.locators.schedule_header_selector)
@@ -328,6 +337,7 @@ class InformationAcquisitionModule(QObject):
             "rows": rows,
         }
 
+    """有些天可能是blank，没有任何schedule"""
     def _wait_for_schedule_rows_or_empty_day(self, driver: WebDriver) -> None:
         short_wait = WebDriverWait(driver, self.locators.schedule_rows_wait_seconds)
         try:
@@ -590,6 +600,7 @@ class InformationAcquisitionModule(QObject):
         # )
         return None
 
+    """登陆后可能会弹出welcome窗口，先点掉"""
     def _dismiss_welcome_if_present(self, driver: WebDriver) -> None:
         close_buttons = driver.find_elements(By.CSS_SELECTOR, self.locators.welcome_close_selector)
         if not close_buttons:

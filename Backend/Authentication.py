@@ -19,7 +19,7 @@ from Frontend.qt_compat import QObject, pyqtSignal
 class AuthenticationConfigurationError(ValueError):
     """Raised when required Selenium locators are not configured."""
 
-
+"""集中存储所有标签/id名等可能会影响脚本结果的‘脆弱’参数"""
 @dataclass(frozen=True)
 class LocatorConfig:
     """Editable Selenium locators for the TigerNet login flow."""
@@ -78,9 +78,11 @@ class AuthenticationModule(QObject):
             pass
         self.driver = None
 
+    """主要脚本"""
     def _run_login_flow(self, username: str, password: str) -> None:
         try:
             self._validate_locator_config()
+            """重新开一个driver"""
             self.close_driver()
             driver = self._create_driver()
             wait = WebDriverWait(driver, self.timeout_seconds)
@@ -88,6 +90,7 @@ class AuthenticationModule(QObject):
             self.authentication_status.emit("Opening TigerNet login page.")
             driver.get(self.locators.login_url)
 
+            """<1>输入Username"""
             username_input = self._wait_visible(
                 wait,
                 self.locators.username_by,
@@ -97,6 +100,7 @@ class AuthenticationModule(QObject):
             username_input.clear()
             username_input.send_keys(username)
 
+            """<2>点击确定button"""
             username_next = self._wait_clickable(
                 wait,
                 self.locators.username_next_by,
@@ -105,6 +109,7 @@ class AuthenticationModule(QObject):
             )
             username_next.click()
 
+            """<3>输入Password"""
             password_input = self._wait_visible(
                 wait,
                 self.locators.password_by,
@@ -114,6 +119,7 @@ class AuthenticationModule(QObject):
             password_input.clear()
             password_input.send_keys(password)
 
+            """<4>点击确定button"""
             password_next = self._wait_clickable(
                 wait,
                 self.locators.password_next_by,

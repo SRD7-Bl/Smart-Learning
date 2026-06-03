@@ -13,7 +13,7 @@ from Frontend.qt_compat import QObject, pyqtSignal
 
 class ApplicationController(QObject):
     """Coordinate frontend requests and backend modules."""
-
+    """信号插"""
     login_succeeded = pyqtSignal(dict)
     login_failed = pyqtSignal(str)
     refresh_succeeded = pyqtSignal(dict)
@@ -41,11 +41,12 @@ class ApplicationController(QObject):
         self.processor_module = processor_module or DataProcessingModule(self)
         self.error_handler = error_handler or ErrorHandlingModule(self)
         self._pending_login_credentials: tuple[str, str] | None = None
-        self._pending_refresh_mode = "both"
+        self._pending_refresh_mode = "both" """默认是both，也就是assignment + Schedule"""
         self._pending_schedule_day_count = 1
         self._pending_parsed_schedule: dict | None = None
         self._connect_modules()
 
+    """连接插槽"""
     def _connect_modules(self) -> None:
         self.data_access_module.user_settings_loaded.connect(self._check_login_against_settings)
         self.data_access_module.data_access_failed.connect(self._handle_data_access_failure)
@@ -86,7 +87,7 @@ class ApplicationController(QObject):
         auth_settings = user_settings.get("auth", {})
         expected_student_id = str(auth_settings.get("student_id", ""))
         expected_password = str(auth_settings.get("password", ""))
-
+        """Basic login info. check"""
         if student_id == expected_student_id and password == expected_password:
             self.login_succeeded.emit(user_settings)
             self.controller_status.emit("Login credentials matched local user settings.")
@@ -96,11 +97,12 @@ class ApplicationController(QObject):
 
     def _run_refresh_pipeline(self, driver: object) -> None:
         refresh_mode = self._pending_refresh_mode
+        """优先refresh schedule"""
         if refresh_mode == "schedule":
             self.controller_status.emit("Authentication succeeded. Acquiring schedule information.")
             self.acquisition_module.acquire_schedule_info(driver, day_count=self._pending_schedule_day_count)
             return
-
+        """再refresh key academic info."""
         include_schedule = refresh_mode == "both"
         self.controller_status.emit("Authentication succeeded. Acquiring course information.")
         self.acquisition_module.acquire_course_info(
@@ -109,6 +111,7 @@ class ApplicationController(QObject):
             schedule_day_count=self._pending_schedule_day_count,
         )
 
+    """处理schedule部分"""
     def _handle_schedule_info_acquired(self, schedule: dict) -> None:
         self.controller_status.emit("Schedule acquired. Parsing schedule information.")
         self.parser_module.parse_schedule_info(schedule)
