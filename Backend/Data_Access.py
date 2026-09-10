@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ class DataAccessModule(QObject):
     data_access_failed = pyqtSignal(str)
     auth_credentials_updated = pyqtSignal()
     academic_info_saved = pyqtSignal()
+    local_data_deleted = pyqtSignal()
 
     def __init__(
         self,
@@ -41,7 +43,6 @@ class DataAccessModule(QObject):
             self.data_access_failed.emit(str(error))
             return
 
-        self._print_user_settings_summary(user_settings)
         self.user_settings_loaded.emit(user_settings)
 
     """获取登录信息"""
@@ -59,11 +60,15 @@ class DataAccessModule(QObject):
             self.data_access_failed.emit("Local auth credentials are missing student ID or password.")
             return
 
-        self._print_user_settings_summary(user_settings)
         self.auth_credentials_loaded.emit(student_id, password)
 
     """更新(用户修改了)登录信息"""
-    def update_auth_credentials(self, username: str, password: str) -> None:
+    def update_auth_credentials(
+        self,
+        username: str,
+        password: str,
+        current_password: str = "",
+    ) -> None:
         username = username.strip()
         if not username or not password:
             self.data_access_failed.emit("Username and password are required.")
@@ -71,6 +76,7 @@ class DataAccessModule(QObject):
 
         try:
             user_settings = self._read_user_settings()
+            self._require_current_password(user_settings, current_password, allow_missing=True)
             user_settings["auth"] = {
                 "student_id": username,
                 "password": password,
@@ -82,6 +88,28 @@ class DataAccessModule(QObject):
 
         self.auth_credentials_updated.emit()
 
+    def delete_local_data(self, current_password: str) -> None:
+        """Delete stored credentials and cached academic information after password verification."""
+        try:
+            user_settings = self._read_user_settings()
+            self._require_current_password(user_settings, current_password)
+            self._clear_local_data()
+        except ValueError as error:
+            self.data_access_failed.emit(str(error))
+            return
+
+        self.local_data_deleted.emit()
+
+    def reset_local_data(self) -> None:
+        """Reset recoverable local data when the stored password is unavailable."""
+        try:
+            self._clear_local_data()
+        except ValueError as error:
+            self.data_access_failed.emit(str(error))
+            return
+
+        self.local_data_deleted.emit()
+
     """中转函数：获取学术信息"""
     def request_academic_info(self) -> None:
         try:
@@ -90,7 +118,6 @@ class DataAccessModule(QObject):
             self.data_access_failed.emit(str(error))
             return
 
-        self._print_academic_info_summary(academic_info)
         self.academic_info_loaded.emit(academic_info)
 
     def load_academic_info_snapshot(self) -> dict[str, Any]:
@@ -119,8 +146,6 @@ class DataAccessModule(QObject):
             self.data_access_failed.emit(str(error))
             return
 
-        self._print_user_settings_summary(user_settings)
-        self._print_academic_info_summary(academic_info)
         self.all_data_loaded.emit(user_settings, academic_info)
 
     def encrypt_existing_storage(self) -> None:
@@ -136,7 +161,10 @@ class DataAccessModule(QObject):
     def _ensure_storage_files(self) -> None:
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         if not self.user_settings_path.exists() or self.user_settings_path.stat().st_size == 0:
-            self._write_json_file(self.user_settings_path, {"auto_login": False})
+            self._write_json_file(
+                self.user_settings_path,
+                {"auto_login": False, "is_first_use": True},
+            )
         if not self.academic_info_path.exists() or self.academic_info_path.stat().st_size == 0:
             self._write_json_file(self.academic_info_path, {})
 
@@ -198,6 +226,35 @@ class DataAccessModule(QObject):
             "payload": self.encryption_service.encrypt_dict(academic_info),
         }
 
+    def _require_current_password(
+        self,
+        user_settings: dict[str, Any],
+        supplied_password: str,
+        allow_missing: bool = False,
+    ) -> None:
+        auth = user_settings.get("auth", {})
+        if not isinstance(auth, dict):
+            raise ValueError("Stored authentication information is invalid.")
+
+        expected_password = str(auth.get("password", ""))
+        if not expected_password:
+            if allow_missing:
+                return
+            raise ValueError("No stored password is available to authorize this operation.")
+
+        if not secrets.compare_digest(
+            supplied_password.encode("utf-8"),
+            expected_password.encode("utf-8"),
+        ):
+            raise ValueError("Current password is incorrect.")
+
+    def _clear_local_data(self) -> None:
+        self._write_json_file(
+            self.user_settings_path,
+            {"auto_login": False, "is_first_use": True},
+        )
+        self._write_json_file(self.academic_info_path, {})
+
     def _write_json_file(self, path: Path, data: dict[str, Any]) -> None:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -206,25 +263,3 @@ class DataAccessModule(QObject):
                 data_file.write("\n")
         except OSError as error:
             raise ValueError(f"Local data file could not be written: {path.name}") from error
-
-    """两个测试使用的函数"""
-    def _print_user_settings_summary(self, user_settings: dict[str, Any]) -> None:
-        student = user_settings.get("student", {})
-        print(
-            "DataAccessModule user settings loaded:",
-            {
-                "student_id": student.get("student_id", "Unknown"),
-                "auto_login": user_settings.get("auto_login", False),
-                "auth_encrypted": "auth_encrypted" in user_settings,
-            },
-        )
-
-    def _print_academic_info_summary(self, academic_info: dict[str, Any]) -> None:
-        print(
-            "DataAccessModule academic info loaded:",
-            {
-                "student_name": academic_info.get("student_name", "Unknown"),
-                "courses": len(academic_info.get("courses", [])),
-                "schedule_days": len(academic_info.get("schedule_days", [])),
-            },
-        )

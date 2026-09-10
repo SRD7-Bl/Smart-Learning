@@ -18,7 +18,10 @@ from Frontend.Status_Error_Display import StatusErrorDisplayModule
 from Frontend.qt_compat import (
     QApplication,
     ECHO_PASSWORD,
+    MESSAGE_NO,
+    MESSAGE_YES,
     NO_FRAME,
+    QCheckBox,
     QComboBox,
     QFrame,
     QGridLayout,
@@ -305,6 +308,11 @@ class SmartLearningWindow(QMainWindow):
                 border-color: #2364c8;
                 color: #ffffff;
             }
+            QPushButton#dangerButton {
+                background: #ffffff;
+                border-color: #c73737;
+                color: #a52727;
+            }
             QPushButton:hover {
                 border-color: #2364c8;
             }
@@ -393,10 +401,9 @@ class SmartLearningWindow(QMainWindow):
         return header
 
     def _build_input_panel(self) -> QGroupBox:
-        panel = QGroupBox("User Input Module Placeholder")
-        layout = QGridLayout(panel)
-        layout.setHorizontalSpacing(12)
-        layout.setVerticalSpacing(10)
+        panel = QGroupBox("Account and Data Controls")
+        layout = QVBoxLayout(panel)
+        layout.setSpacing(10)
 
         self.student_id_input = QLineEdit()
         self.student_id_input.setPlaceholderText("Student ID")
@@ -418,23 +425,47 @@ class SmartLearningWindow(QMainWindow):
             self.schedule_day_count_selector.addItem(f"{day_count} day(s)", day_count)
         self.schedule_day_count_selector.setMinimumWidth(120)
         self.update_auth_button = QPushButton("Change Email/Password")
+        self.auto_login_checkbox = QCheckBox("Auto login on startup")
+        self.first_use_checkbox = QCheckBox("First time using this application")
+        self.first_use_checkbox.setEnabled(False)
+        self.delete_local_data_button = QPushButton("Delete Local Data")
+        self.delete_local_data_button.setObjectName("dangerButton")
+        self.reset_local_data_button = QPushButton("Forgot Password / Reset App")
+        self.reset_local_data_button.setObjectName("dangerButton")
         self.login_notice = QLabel("请使用与 TigerNet 登录相同的账号和密码")
         self.login_notice.setObjectName("loginNotice")
         self.login_notice.setWordWrap(True)
 
-        layout.addWidget(QLabel("Student ID"), 0, 0)
-        layout.addWidget(self.student_id_input, 0, 1)
-        layout.addWidget(QLabel("Password"), 0, 2)
-        layout.addWidget(self.password_input, 0, 3)
-        layout.addWidget(self.login_button, 0, 4)
-        layout.addWidget(QLabel("Refresh"), 0, 5)
-        layout.addWidget(self.refresh_mode_selector, 0, 6)
-        layout.addWidget(self.schedule_day_count_selector, 0, 7)
-        layout.addWidget(self.refresh_button, 0, 8)
-        layout.addWidget(self.update_auth_button, 1, 2, 1, 2)
-        layout.addWidget(self.login_notice, 1, 4, 1, 5)
-        layout.setColumnStretch(1, 1)
-        layout.setColumnStretch(3, 1)
+        login_row = QHBoxLayout()
+        login_row.addWidget(QLabel("Student ID"))
+        login_row.addWidget(self.student_id_input, stretch=1)
+        login_row.addWidget(QLabel("Password"))
+        login_row.addWidget(self.password_input, stretch=1)
+        login_row.addWidget(self.login_button)
+
+        refresh_row = QHBoxLayout()
+        refresh_row.addWidget(QLabel("Refresh"))
+        refresh_row.addWidget(self.refresh_mode_selector)
+        refresh_row.addWidget(self.schedule_day_count_selector)
+        refresh_row.addWidget(self.refresh_button)
+        refresh_row.addStretch(1)
+
+        preference_row = QHBoxLayout()
+        preference_row.addWidget(self.auto_login_checkbox)
+        preference_row.addWidget(self.first_use_checkbox)
+        preference_row.addStretch(1)
+
+        action_row = QHBoxLayout()
+        action_row.addWidget(self.update_auth_button)
+        action_row.addWidget(self.delete_local_data_button)
+        action_row.addWidget(self.reset_local_data_button)
+        action_row.addStretch(1)
+
+        layout.addLayout(login_row)
+        layout.addLayout(refresh_row)
+        layout.addLayout(preference_row)
+        layout.addLayout(action_row)
+        layout.addWidget(self.login_notice)
         return panel
 
     def _build_content_area(self) -> QTabWidget:
@@ -553,7 +584,13 @@ class SmartLearningWindow(QMainWindow):
         self.logout_button.clicked.connect(self.input_module.request_logout)
         self.login_button.clicked.connect(self._send_login_input)
         self.update_auth_button.clicked.connect(self._update_auth_credentials)
+        self.auto_login_checkbox.toggled.connect(self.input_module.request_auto_login_change)
+        self.delete_local_data_button.clicked.connect(self._delete_local_data)
+        self.reset_local_data_button.clicked.connect(self._reset_local_data)
         self.input_module.content_access_changed.connect(self._set_content_access)
+        self.input_module.auto_login_changed.connect(self._set_auto_login_checkbox)
+        self.input_module.first_use_changed.connect(self._set_first_use_checkbox)
+        self.input_module.privacy_notice_requested.connect(self._show_privacy_notice)
         self.input_module.validation_failed.connect(self.status_error_display.display_error)
         self.input_module.status_changed.connect(self.status_error_display.display_status)
         self.request_module.request_queued.connect(self.status_error_display.display_status)
@@ -565,6 +602,7 @@ class SmartLearningWindow(QMainWindow):
         self.data_access_module.academic_info_loaded.connect(self.render_academic_info)
         self.data_access_module.data_access_failed.connect(self.status_error_display.display_error)
         self.data_access_module.auth_credentials_updated.connect(self._show_auth_update_success)
+        self.data_access_module.local_data_deleted.connect(self._handle_local_data_deleted)
         self.status_error_display.status_ready.connect(self.set_status)
 
     def _send_login_input(self) -> None:
@@ -581,6 +619,7 @@ class SmartLearningWindow(QMainWindow):
         )
 
     def render_academic_info(self, data: dict[str, Any]) -> None:
+        self.academic_info = data
         self._clear_layout(self.profile_layout)
         self._clear_layout(self.schedule_list_layout)
         self._clear_layout(self.course_detail_layout)
@@ -618,11 +657,12 @@ class SmartLearningWindow(QMainWindow):
     def _handle_login_succeeded(self, user_settings: dict[str, Any]) -> None:
         self._clear_login_inputs()
         self._clear_layout(self.profile_layout)
+        student = user_settings.get("student", {})
         self._render_profile(
             {
-                "student_name": user_settings.get("student", {}).get("display_name", "Unknown"),
-                "student_id": user_settings.get("student", {}).get("student_id", "Unknown"),
-                "last_updated": user_settings.get("last_successful_refresh", "Never"),
+                "student_name": self.academic_info.get("student_name") or student.get("display_name", "Unknown"),
+                "student_id": self.academic_info.get("student_id") or student.get("student_id", "Unknown"),
+                "last_updated": self.academic_info.get("last_updated", "Never"),
             }
         )
 
@@ -631,6 +671,15 @@ class SmartLearningWindow(QMainWindow):
         self.password_input.clear()
 
     def _update_auth_credentials(self) -> None:
+        current_password, current_password_ok = QInputDialog.getText(
+            self,
+            "Authorize Credential Change",
+            "Current password (leave blank only if no credentials are configured):",
+            ECHO_PASSWORD,
+        )
+        if not current_password_ok:
+            return
+
         username, username_ok = QInputDialog.getText(
             self,
             "Change TigerNet Login",
@@ -648,7 +697,82 @@ class SmartLearningWindow(QMainWindow):
         if not password_ok:
             return
 
-        self.data_access_module.update_auth_credentials(username, password)
+        self.data_access_module.update_auth_credentials(
+            username,
+            password,
+            current_password=current_password,
+        )
+
+    def _delete_local_data(self) -> None:
+        current_password, password_ok = QInputDialog.getText(
+            self,
+            "Delete Local Data",
+            "Enter the current password to authorize deletion:",
+            ECHO_PASSWORD,
+        )
+        if not password_ok:
+            return
+
+        confirmation = QMessageBox.question(
+            self,
+            "Delete Local Data",
+            "Permanently delete the locally stored login information, courses, assignments, and schedule?",
+            MESSAGE_YES | MESSAGE_NO,
+            MESSAGE_NO,
+        )
+        if confirmation != MESSAGE_YES:
+            return
+
+        self.data_access_module.delete_local_data(current_password)
+
+    def _handle_local_data_deleted(self) -> None:
+        self.academic_info = {}
+        self.render_academic_info({})
+        self.input_module.request_logout()
+        self.status_error_display.display_status("Local data and login information deleted.")
+        QMessageBox.information(self, "Smart Learning", "Local data and login information deleted.")
+
+    def _reset_local_data(self) -> None:
+        confirmation = QMessageBox.question(
+            self,
+            "Reset Smart Learning",
+            "Forgotten passwords cannot be recovered. Resetting deletes all local login and academic data. Continue?",
+            MESSAGE_YES | MESSAGE_NO,
+            MESSAGE_NO,
+        )
+        if confirmation != MESSAGE_YES:
+            return
+
+        confirmation_text, confirmation_ok = QInputDialog.getText(
+            self,
+            "Confirm Reset",
+            "Type RESET to permanently clear this application:",
+        )
+        if not confirmation_ok:
+            return
+        if confirmation_text.strip() != "RESET":
+            self.status_error_display.display_error("Reset cancelled because the confirmation text did not match.")
+            return
+
+        self.data_access_module.reset_local_data()
+
+    def _set_auto_login_checkbox(self, enabled: bool) -> None:
+        self.auto_login_checkbox.blockSignals(True)
+        self.auto_login_checkbox.setChecked(enabled)
+        self.auto_login_checkbox.blockSignals(False)
+
+    def _set_first_use_checkbox(self, enabled: bool) -> None:
+        self.first_use_checkbox.setChecked(enabled)
+
+    def _show_privacy_notice(self) -> None:
+        QMessageBox.information(
+            self,
+            "How Smart Learning Handles Your Data",
+            "Smart Learning stores your TigerNet login and cached academic information only on this Mac.\n\n"
+            "Your password is sent directly to the TigerNet/Microsoft login page only when authentication is needed. "
+            "The application does not send your password, grades, assignments, or schedule to the developer or "
+            "to any other third party.",
+        )
 
     def _show_auth_update_success(self) -> None:
         self.status_error_display.display_status("TigerNet login credentials updated.")
@@ -661,6 +785,8 @@ class SmartLearningWindow(QMainWindow):
         self.refresh_button.setEnabled(can_view_content)
         self.refresh_mode_selector.setEnabled(can_view_content)
         self.schedule_day_count_selector.setEnabled(can_view_content)
+        self.auto_login_checkbox.setEnabled(can_view_content)
+        self.delete_local_data_button.setEnabled(can_view_content)
         self.login_button.setEnabled(not can_view_content)
 
         if can_view_content:

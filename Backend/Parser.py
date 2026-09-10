@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
@@ -30,8 +29,6 @@ class ParserModule(QObject):
             self.parsing_failed.emit(f"Parser failed: {error}")
             return
 
-        # print("ParserModule rough academic info:")
-        # print(json.dumps(parsed, ensure_ascii=False, indent=2))
         self.parsing_status.emit(f"Parsed {len(parsed.get('courses', []))} course(s).")
         self.parsing_succeeded.emit(parsed)
 
@@ -59,8 +56,6 @@ class ParserModule(QObject):
             self.parsing_failed.emit(f"Schedule parser failed: {error}")
             return
 
-        print("ParserModule rough schedule info:")
-        print(json.dumps(parsed, ensure_ascii=False, indent=2))
         self.parsing_status.emit(f"Parsed {len(parsed.get('schedule_days', []))} schedule day(s).")
         self.schedule_parsing_succeeded.emit(parsed)
 

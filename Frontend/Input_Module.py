@@ -21,6 +21,8 @@ class UserInputModule(QObject):
 
     content_access_changed = pyqtSignal(bool)
     auto_login_changed = pyqtSignal(bool)
+    first_use_changed = pyqtSignal(bool)
+    privacy_notice_requested = pyqtSignal()
     login_request_accepted = pyqtSignal(str, str)
     logout_requested = pyqtSignal()
     refresh_request_accepted = pyqtSignal(str, int)
@@ -39,6 +41,7 @@ class UserInputModule(QObject):
         self.request_module = request_module or RequestSendingModule(self)
         self.is_logged_in = False
         self.auto_login_enabled = False
+        self.is_first_use = True
         self._connect_request_module()
         self._bootstrap_login_state()
 
@@ -73,6 +76,18 @@ class UserInputModule(QObject):
         self.logout_requested.emit()
         self.status_changed.emit("Logged out. Auto login is disabled.")
 
+    def request_auto_login_change(self, enabled: bool) -> None:
+        if enabled and not self.is_logged_in:
+            self.auto_login_changed.emit(False)
+            self.validation_failed.emit("Login is required before enabling auto login.")
+            return
+
+        self.auto_login_enabled = enabled
+        self._write_auto_login(enabled)
+        self.auto_login_changed.emit(enabled)
+        state = "enabled" if enabled else "disabled"
+        self.status_changed.emit(f"Auto login is {state}.")
+
     def request_refresh(self, refresh_mode: str = "both", schedule_day_count: int = 1) -> None:
         if not self.is_logged_in:
             self.validation_failed.emit("Please login before refreshing academic information.")
@@ -85,12 +100,11 @@ class UserInputModule(QObject):
 
     def _handle_login_success(self, user_settings: dict) -> None:
         self.is_logged_in = True
-        self.auto_login_enabled = True
-        self._write_auto_login(True)
         self.content_access_changed.emit(True)
-        self.auto_login_changed.emit(True)
+        self.auto_login_changed.emit(self.auto_login_enabled)
         display_name = user_settings.get("student", {}).get("display_name", "student")
-        self.status_changed.emit(f"Login succeeded for {display_name}. Auto login is enabled.")
+        self.status_changed.emit(f"Login succeeded for {display_name}.")
+        self._complete_first_use_if_needed()
 
     def _handle_login_failure(self, message: str) -> None:
         self.is_logged_in = False
@@ -103,13 +117,16 @@ class UserInputModule(QObject):
     def _bootstrap_login_state(self) -> None:
         settings = self._read_settings()
         self.auto_login_enabled = bool(settings.get("auto_login", False))
+        self.is_first_use = bool(settings.get("is_first_use", True))
         self.is_logged_in = self.auto_login_enabled
 
     def emit_initial_state(self) -> None:
         self.content_access_changed.emit(self.is_logged_in)
         self.auto_login_changed.emit(self.auto_login_enabled)
+        self.first_use_changed.emit(self.is_first_use)
         if self.is_logged_in:
             self.status_changed.emit("Auto login is enabled. Showing local academic information.")
+            self._complete_first_use_if_needed()
         else:
             self.status_changed.emit("Login is required before viewing academic information.")
 
@@ -127,15 +144,27 @@ class UserInputModule(QObject):
         return data if isinstance(data, dict) else {}
 
     def _write_auto_login(self, enabled: bool) -> None:
+        self._write_setting("auto_login", enabled)
+
+    def _complete_first_use_if_needed(self) -> None:
+        if not self.is_first_use:
+            return
+
+        self.privacy_notice_requested.emit()
+        self.is_first_use = False
+        self._write_setting("is_first_use", False)
+        self.first_use_changed.emit(False)
+
+    def _write_setting(self, name: str, value: bool) -> None:
         settings = self._read_settings()
-        settings["auto_login"] = enabled
+        settings[name] = value
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
             with self.settings_path.open("w", encoding="utf-8") as settings_file:
                 json.dump(settings, settings_file, indent=2)
         except OSError:
-            self.validation_failed.emit("Auto login setting could not be updated.")
+            self.validation_failed.emit("User settings could not be updated.")
 
     def _default_settings_path(self) -> Path:
         return default_storage_dir() / "User_setting.js"

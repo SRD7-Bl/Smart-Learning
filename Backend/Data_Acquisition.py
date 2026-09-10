@@ -171,10 +171,7 @@ class InformationAcquisitionModule(QObject):
                 self.acquisition_status.emit("Could not find the next schedule day button; stopping schedule acquisition.")
                 break
 
-        result = {"schedule_days": schedules}
-        print("InformationAcquisitionModule schedule days:")
-        print(result)
-        return result
+        return {"schedule_days": schedules}
 
     def _acquire_daily_schedule(
         self,
@@ -233,7 +230,6 @@ class InformationAcquisitionModule(QObject):
                 return button
 
         driver.switch_to.default_content()
-        self._print_schedule_button_candidates(driver)
         return None
 
     def _find_next_schedule_day_button_in_current_context(self, driver: WebDriver) -> WebElement | None:
@@ -296,15 +292,6 @@ class InformationAcquisitionModule(QObject):
             )
         )
 
-    """接下来两个function是调试用的，如果找不到next button则在控制台输出候选人"""
-    def _print_schedule_button_candidates(self, driver: WebDriver) -> None:
-        candidates = self._schedule_next_button_candidates(driver)
-        print("InformationAcquisitionModule: next schedule button not found. Candidates:")
-        for index, candidate in enumerate(candidates, start=1):
-            text = self._normalized_visible_text(candidate)
-            outer_html = candidate.get_attribute("outerHTML") or ""
-            print(f"  {index}. text={text!r}, displayed={candidate.is_displayed()}, html={outer_html[:200]!r}")
-
     def _schedule_next_button_candidates(self, driver: WebDriver) -> list[WebElement]:
         root = self._find_first(driver, self.locators.schedule_main_selector)
         if root is None:
@@ -327,9 +314,6 @@ class InformationAcquisitionModule(QObject):
                 row_data = self._extract_schedule_row(row)
                 if row_data:
                     rows.append(row_data)
-
-        if not rows:
-            self._print_schedule_row_candidates(driver)
 
         return {
             "date": date,
@@ -419,19 +403,6 @@ class InformationAcquisitionModule(QObject):
         )
         return rows if isinstance(rows, list) else []
 
-    def _print_schedule_row_candidates(self, driver: WebDriver) -> None:
-        row_count = len(driver.find_elements(By.CSS_SELECTOR, "#col-main tr"))
-        td_count = len(driver.find_elements(By.CSS_SELECTOR, "#col-main td"))
-        heading_count = len(driver.find_elements(By.CSS_SELECTOR, "#col-main td[data-heading]"))
-        print(
-            "InformationAcquisitionModule: schedule rows empty.",
-            {
-                "tr_count": row_count,
-                "td_count": td_count,
-                "td_data_heading_count": heading_count,
-            },
-        )
-
     def _first_non_date_header_text(self, header: WebElement | None, date: str) -> str:
         if header is None:
             return ""
@@ -456,21 +427,19 @@ class InformationAcquisitionModule(QObject):
             return []
 
         self.acquisition_status.emit("Opening grade details.")
-        # print("InformationAcquisitionModule: clicking grade details link")
         self._click_element(driver, grade_details)
         criteria_container = self._wait_for_criteria_container(wait)
 
         assignments: list[dict[str, str]] = []
         criteria_count = len(criteria_container.find_elements(By.CSS_SELECTOR, self.locators.criteria_item_selector))
         self.acquisition_status.emit(f"Found {criteria_count} criteria groups.")
-        # print(f"InformationAcquisitionModule: criteria count = {criteria_count}")
         for criteria_index in range(criteria_count):
             criteria_container = self._find_criteria_container(driver)
             criteria_items = criteria_container.find_elements(By.CSS_SELECTOR, self.locators.criteria_item_selector)
             if criteria_index >= len(criteria_items):
                 break
 
-            criteria_button = self._find_criteria_button(criteria_items[criteria_index], criteria_index + 1)
+            criteria_button = self._find_criteria_button(criteria_items[criteria_index])
             if criteria_button is None:
                 continue
 
@@ -478,14 +447,9 @@ class InformationAcquisitionModule(QObject):
             if not assignment_type:
                 assignment_type = f"Criteria {criteria_index + 1}"
             self.acquisition_status.emit(f"Opening grade criteria {criteria_index + 1}: {assignment_type}.")
-            # print(f"InformationAcquisitionModule: clicking criteria {criteria_index + 1}: {assignment_type}")
             self._click_element(driver, criteria_button)
             grid = self._wait_for_css(wait, self.locators.assignment_grid_selector, f"assignment grid for {assignment_type}")
             criteria_assignments = self._extract_assignments_from_grid(grid, assignment_type)
-            # print(
-            #     "InformationAcquisitionModule:",
-            #     f"criteria {criteria_index + 1} assignment rows = {len(criteria_assignments)}",
-            # )
             assignments.extend(criteria_assignments)
 
         self.acquisition_status.emit("Closing grade details.")
@@ -518,11 +482,8 @@ class InformationAcquisitionModule(QObject):
         )
         self._click_element(driver, close_button)
         wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, self.locators.criteria_container_selector)))
-        # print("InformationAcquisitionModule: closed grade details")
 
     def _wait_for_criteria_container(self, wait: WebDriverWait) -> WebElement:
-        # print("InformationAcquisitionModule: waiting for criteria container")
-
         def condition(driver: WebDriver) -> WebElement | bool:
             container = self._find_criteria_container_in_current_context(driver)
             if container is not None:
@@ -541,12 +502,10 @@ class InformationAcquisitionModule(QObject):
         for selector in selectors:
             elements = driver.find_elements(By.CSS_SELECTOR, selector)
             if elements:
-                # print(f"InformationAcquisitionModule: criteria container matched CSS: {selector}")
                 return elements[0]
 
         elements = driver.find_elements(By.XPATH, self.locators.criteria_container_xpath)
         if elements:
-            # print(f"InformationAcquisitionModule: criteria container matched XPath: {self.locators.criteria_container_xpath}")
             return elements[0]
 
         return None
@@ -561,20 +520,17 @@ class InformationAcquisitionModule(QObject):
     def _switch_to_frame_with_criteria_container(self, driver: WebDriver) -> WebElement | None:
         driver.switch_to.default_content()
         frames = driver.find_elements(By.CSS_SELECTOR, self.locators.iframe_selector)
-        # print(f"InformationAcquisitionModule: scanning {len(frames)} iframe(s) for criteria container")
-        for index, frame in enumerate(frames, start=1):
+        for frame in frames:
             driver.switch_to.default_content()
             driver.switch_to.frame(frame)
             container = self._find_criteria_container_in_current_context(driver)
             if container is not None:
-                # print(f"InformationAcquisitionModule: criteria container found in iframe {index}")
                 return container
 
         driver.switch_to.default_content()
         return None
 
     def _wait_for_css(self, wait: WebDriverWait, selector: str, label: str) -> WebElement:
-        # print(f"InformationAcquisitionModule: waiting for {label}: {selector}")
         return wait.until(
             EC.presence_of_element_located((By.CSS_SELECTOR, selector)),
             message=f"Timed out waiting for {label}: {selector}",
@@ -587,17 +543,10 @@ class InformationAcquisitionModule(QObject):
                 return button
         return False
 
-    def _find_criteria_button(self, criteria_item: WebElement, criteria_number: int) -> WebElement | None:
+    def _find_criteria_button(self, criteria_item: WebElement) -> WebElement | None:
         buttons = criteria_item.find_elements(By.CSS_SELECTOR, self.locators.criteria_button_selector)
         if buttons:
-            # print(f"InformationAcquisitionModule: criteria {criteria_number} button count = {len(buttons)}")
             return buttons[0]
-
-        # outer_html = criteria_item.get_attribute("outerHTML") or ""
-        # print(
-        #     f"InformationAcquisitionModule: criteria {criteria_number} has no button. "
-        #     f"outerHTML starts with: {outer_html[:300]}"
-        # )
         return None
 
     """登陆后可能会弹出welcome窗口，先点掉"""
