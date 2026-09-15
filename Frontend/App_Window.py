@@ -23,6 +23,7 @@ from Frontend.qt_compat import (
     NO_FRAME,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -391,12 +392,11 @@ class SmartLearningWindow(QMainWindow):
         title_area.addWidget(self.title_label)
         title_area.addWidget(self.subtitle_label)
 
-        self.settings_button = QPushButton("Settings")
-        self.settings_button.hide()
+        self.help_button = QPushButton("Help")
         self.logout_button = QPushButton("Log out")
 
         layout.addLayout(title_area, stretch=1)
-        layout.addWidget(self.settings_button)
+        layout.addWidget(self.help_button)
         layout.addWidget(self.logout_button)
         return header
 
@@ -580,7 +580,7 @@ class SmartLearningWindow(QMainWindow):
 
     def _connect_signal_board(self) -> None:
         self.refresh_button.clicked.connect(self._send_refresh_input)
-        self.settings_button.clicked.connect(self.input_module.request_settings)
+        self.help_button.clicked.connect(self._show_help_dialog)
         self.logout_button.clicked.connect(self.input_module.request_logout)
         self.login_button.clicked.connect(self._send_login_input)
         self.update_auth_button.clicked.connect(self._update_auth_credentials)
@@ -604,6 +604,101 @@ class SmartLearningWindow(QMainWindow):
         self.data_access_module.auth_credentials_updated.connect(self._show_auth_update_success)
         self.data_access_module.local_data_deleted.connect(self._handle_local_data_deleted)
         self.status_error_display.status_ready.connect(self.set_status)
+
+    def _show_help_dialog(self) -> None:
+        dialog = self._build_help_dialog()
+        if hasattr(dialog, "exec"):
+            dialog.exec()
+        else:  # pragma: no cover - retained for older PyQt5 builds.
+            dialog.exec_()
+
+    def _build_help_dialog(self) -> QDialog:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Smart Learning Help")
+        dialog.setMinimumSize(680, 560)
+        dialog.resize(720, 620)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        title = QLabel("Smart Learning User Guide")
+        title.setObjectName("appTitle")
+        introduction = QLabel(
+            "Use this guide to set up the application, refresh TigerNet information, "
+            "and understand how your local data is handled."
+        )
+        introduction.setWordWrap(True)
+        introduction.setObjectName("mutedText")
+        layout.addWidget(title)
+        layout.addWidget(introduction)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(NO_FRAME)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(2, 2, 8, 2)
+        content_layout.setSpacing(10)
+
+        sections = (
+            (
+                "What This Application Does",
+                "Smart Learning is a local desktop dashboard for Ridley College students. "
+                "It retrieves schedules, courses, assignments, grades, and teacher comments from TigerNet, "
+                "organizes them into simpler views, and keeps the most recently refreshed information available locally.",
+            ),
+            (
+                "Account Setup",
+                "First setup\n"
+                "1. Select Change Email/Password.\n"
+                "2. Leave Current password empty when no account has been configured.\n"
+                "3. Enter the same TigerNet email or student ID and password used on the school website.\n"
+                "4. Enter those credentials in the login fields to unlock the application.\n\n"
+                "Later changes require the currently stored password. If it has been forgotten, use "
+                "Forgot Password / Reset App. Resetting removes all local login and academic data before a new account can be configured.",
+            ),
+            (
+                "How to Use Smart Learning",
+                "• Login unlocks the Schedule and Courses & Assignments tabs.\n"
+                "• Refresh Both to update assignments and schedules together, or select one data type.\n"
+                "• Choose how many schedule days to retrieve before refreshing.\n"
+                "• Use the course selector and assignment filters to find specific results.\n"
+                "• Auto login is optional. When enabled, anyone using this macOS account can open the cached information without entering the TigerNet password.\n"
+                "• Log out to lock the academic tabs and disable auto login.\n"
+                "• Delete Local Data requires the current password. The reset option is only for cases where that password is no longer available.",
+            ),
+            (
+                "Security and Privacy",
+                "The TigerNet login and cached academic information are stored only on this Mac. "
+                "The local files are encrypted, and their encryption key is kept in macOS Keychain.\n\n"
+                "The password is sent directly to the TigerNet/Microsoft login page only when authentication is required. "
+                "Smart Learning does not send passwords, grades, assignments, schedules, or teacher comments to the developer or to any other third party.\n\n"
+                "Deleting or resetting local data cannot be undone inside the application. The academic information can be retrieved again from TigerNet after configuring a valid account.",
+            ),
+        )
+
+        for section_title, section_text in sections:
+            group = QGroupBox(section_title)
+            group_layout = QVBoxLayout(group)
+            body = QLabel(section_text)
+            body.setWordWrap(True)
+            body.setStyleSheet("font-weight: 400;")
+            group_layout.addWidget(body)
+            content_layout.addWidget(group)
+
+        content_layout.addStretch(1)
+        scroll.setWidget(content)
+        layout.addWidget(scroll, stretch=1)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        close_button = QPushButton("Close")
+        close_button.setObjectName("primaryButton")
+        close_button.clicked.connect(dialog.accept)
+        button_row.addWidget(close_button)
+        layout.addLayout(button_row)
+        return dialog
 
     def _send_login_input(self) -> None:
         self.input_module.request_login(
