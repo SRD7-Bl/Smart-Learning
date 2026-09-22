@@ -93,7 +93,7 @@ class ApplicationController(QObject):
             self.controller_status.emit("Login credentials matched local user settings.")
             return
 
-        self.login_failed.emit("Login failed: student ID or password does not match local settings.")
+        self.login_failed.emit("Login failed: email address or password does not match local settings.")
 
     def _run_refresh_pipeline(self, driver: object) -> None:
         refresh_mode = self._pending_refresh_mode

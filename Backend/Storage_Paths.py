@@ -30,3 +30,8 @@ def user_data_dir() -> Path:
 def default_storage_dir() -> Path:
     """Return the directory used for local mutable app storage."""
     return user_data_dir() / "Storage"
+
+
+def default_log_dir() -> Path:
+    """Return the directory used for local crash reports."""
+    return user_data_dir() / "Logs"

@@ -54,7 +54,7 @@ class UserInputModule(QObject):
     def request_login(self, student_id: str, password: str) -> None:
         student_id = student_id.strip()
         if not student_id:
-            self.validation_failed.emit("Student ID is required before login.")
+            self.validation_failed.emit("Email address is required before login.")
             return
 
         if not password:

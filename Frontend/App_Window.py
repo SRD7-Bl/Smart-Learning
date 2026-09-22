@@ -17,6 +17,7 @@ from Frontend.Request_Module import RequestSendingModule
 from Frontend.Status_Error_Display import StatusErrorDisplayModule
 from Frontend.qt_compat import (
     QApplication,
+    ECHO_NORMAL,
     ECHO_PASSWORD,
     MESSAGE_NO,
     MESSAGE_YES,
@@ -247,6 +248,7 @@ class SmartLearningWindow(QMainWindow):
         main_layout.setSpacing(16)
 
         main_layout.addWidget(self._build_header())
+        main_layout.addWidget(self._build_help_hint())
         main_layout.addWidget(self._build_content_area(), stretch=1)
         main_layout.addWidget(self._build_status_bar())
 
@@ -274,6 +276,15 @@ class SmartLearningWindow(QMainWindow):
                 color: #5f3b00;
                 font-weight: 700;
                 padding: 8px 10px;
+            }
+            QLabel#helpHint {
+                background: #e9f2ff;
+                border: 2px solid #2364c8;
+                border-radius: 8px;
+                color: #153f78;
+                font-size: 15px;
+                font-weight: 700;
+                padding: 10px 12px;
             }
             QLabel#mutedText {
                 color: #667085;
@@ -308,6 +319,17 @@ class SmartLearningWindow(QMainWindow):
                 background: #2364c8;
                 border-color: #2364c8;
                 color: #ffffff;
+            }
+            QPushButton#helpButton {
+                background: #f5a623;
+                border: 2px solid #c97800;
+                color: #2b1a00;
+                font-weight: 700;
+                min-width: 130px;
+            }
+            QPushButton#helpButton:hover {
+                background: #ffbd4a;
+                border-color: #9d5e00;
             }
             QPushButton#dangerButton {
                 background: #ffffff;
@@ -387,12 +409,10 @@ class SmartLearningWindow(QMainWindow):
         title_area = QVBoxLayout()
         self.title_label = QLabel("Smart Learning")
         self.title_label.setObjectName("appTitle")
-        self.subtitle_label = QLabel("Academic dashboard rendering skeleton")
-        self.subtitle_label.setObjectName("mutedText")
         title_area.addWidget(self.title_label)
-        title_area.addWidget(self.subtitle_label)
 
-        self.help_button = QPushButton("Help")
+        self.help_button = QPushButton("Help / 使用教程")
+        self.help_button.setObjectName("helpButton")
         self.logout_button = QPushButton("Log out")
 
         layout.addLayout(title_area, stretch=1)
@@ -400,17 +420,29 @@ class SmartLearningWindow(QMainWindow):
         layout.addWidget(self.logout_button)
         return header
 
+    def _build_help_hint(self) -> QLabel:
+        hint = QLabel(
+            "第一次使用或不知道下一步做什么？请点击右上角的“Help / 使用教程”，"
+            "查看账户设置、使用步骤和安全说明。"
+        )
+        hint.setObjectName("helpHint")
+        hint.setWordWrap(True)
+        return hint
+
     def _build_input_panel(self) -> QGroupBox:
         panel = QGroupBox("Account and Data Controls")
         layout = QVBoxLayout(panel)
         layout.setSpacing(10)
 
         self.student_id_input = QLineEdit()
-        self.student_id_input.setPlaceholderText("Student ID")
+        self.student_id_input.setPlaceholderText("Email Address")
 
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Password")
         self.password_input.setEchoMode(ECHO_PASSWORD)
+        self.password_visibility_button = QPushButton("Show")
+        self.password_visibility_button.setCheckable(True)
+        self.password_visibility_button.setToolTip("Show or hide the password")
 
         self.login_button = QPushButton("Login")
         self.refresh_button = QPushButton("Refresh")
@@ -437,10 +469,11 @@ class SmartLearningWindow(QMainWindow):
         self.login_notice.setWordWrap(True)
 
         login_row = QHBoxLayout()
-        login_row.addWidget(QLabel("Student ID"))
+        login_row.addWidget(QLabel("Email Address"))
         login_row.addWidget(self.student_id_input, stretch=1)
         login_row.addWidget(QLabel("Password"))
         login_row.addWidget(self.password_input, stretch=1)
+        login_row.addWidget(self.password_visibility_button)
         login_row.addWidget(self.login_button)
 
         refresh_row = QHBoxLayout()
@@ -583,6 +616,7 @@ class SmartLearningWindow(QMainWindow):
         self.help_button.clicked.connect(self._show_help_dialog)
         self.logout_button.clicked.connect(self.input_module.request_logout)
         self.login_button.clicked.connect(self._send_login_input)
+        self.password_visibility_button.toggled.connect(self._set_password_visibility)
         self.update_auth_button.clicked.connect(self._update_auth_credentials)
         self.auto_login_checkbox.toggled.connect(self.input_module.request_auto_login_change)
         self.delete_local_data_button.clicked.connect(self._delete_local_data)
@@ -764,6 +798,14 @@ class SmartLearningWindow(QMainWindow):
     def _clear_login_inputs(self) -> None:
         self.student_id_input.clear()
         self.password_input.clear()
+        self.password_visibility_button.blockSignals(True)
+        self.password_visibility_button.setChecked(False)
+        self.password_visibility_button.blockSignals(False)
+        self._set_password_visibility(False)
+
+    def _set_password_visibility(self, visible: bool) -> None:
+        self.password_input.setEchoMode(ECHO_NORMAL if visible else ECHO_PASSWORD)
+        self.password_visibility_button.setText("Hide" if visible else "Show")
 
     def _update_auth_credentials(self) -> None:
         current_password, current_password_ok = QInputDialog.getText(
@@ -778,7 +820,7 @@ class SmartLearningWindow(QMainWindow):
         username, username_ok = QInputDialog.getText(
             self,
             "Change TigerNet Login",
-            "Email / username:",
+            "Email Address:",
         )
         if not username_ok:
             return

@@ -25,6 +25,7 @@ try:
         QWidget,
     )
 
+    ECHO_NORMAL = QLineEdit.Normal
     ECHO_PASSWORD = QLineEdit.Password
     EXPANDING_POLICY = QSizePolicy.Expanding
     MESSAGE_NO = QMessageBox.No
@@ -55,6 +56,7 @@ except ImportError:  # pragma: no cover - depends on the local PyQt install.
         QWidget,
     )
 
+    ECHO_NORMAL = QLineEdit.EchoMode.Normal
     ECHO_PASSWORD = QLineEdit.EchoMode.Password
     EXPANDING_POLICY = QSizePolicy.Policy.Expanding
     MESSAGE_NO = QMessageBox.StandardButton.No

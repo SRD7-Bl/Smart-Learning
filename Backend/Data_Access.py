@@ -57,7 +57,7 @@ class DataAccessModule(QObject):
             return
 
         if not student_id or not password:
-            self.data_access_failed.emit("Local auth credentials are missing student ID or password.")
+            self.data_access_failed.emit("Local auth credentials are missing an email address or password.")
             return
 
         self.auth_credentials_loaded.emit(student_id, password)
