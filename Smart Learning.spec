@@ -47,4 +47,8 @@ app = BUNDLE(
     name='Smart Learning.app',
     icon=None,
     bundle_identifier='com.smartlearning.app',
+    info_plist={
+        'CFBundleShortVersionString': '1.0.3',
+        'CFBundleVersion': '1.0.3',
+    },
 )

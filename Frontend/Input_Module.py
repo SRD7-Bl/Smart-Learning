@@ -22,6 +22,7 @@ class UserInputModule(QObject):
     content_access_changed = pyqtSignal(bool)
     auto_login_changed = pyqtSignal(bool)
     first_use_changed = pyqtSignal(bool)
+    dark_mode_changed = pyqtSignal(bool)
     privacy_notice_requested = pyqtSignal()
     login_request_accepted = pyqtSignal(str, str)
     logout_requested = pyqtSignal()
@@ -42,6 +43,8 @@ class UserInputModule(QObject):
         self.is_logged_in = False
         self.auto_login_enabled = False
         self.is_first_use = True
+        self.dark_mode_enabled = False
+        self._privacy_notice_shown = False
         self._connect_request_module()
         self._bootstrap_login_state()
 
@@ -50,6 +53,7 @@ class UserInputModule(QObject):
         self.refresh_request_accepted.connect(self.request_module.send_refresh_request)
         self.request_module.login_succeeded.connect(self._handle_login_success)
         self.request_module.login_failed.connect(self._handle_login_failure)
+        self.request_module.refresh_succeeded.connect(self._handle_refresh_success)
 
     def request_login(self, student_id: str, password: str) -> None:
         student_id = student_id.strip()
@@ -88,6 +92,20 @@ class UserInputModule(QObject):
         state = "enabled" if enabled else "disabled"
         self.status_changed.emit(f"Auto login is {state}.")
 
+    def request_first_use_change(self, enabled: bool) -> None:
+        self.is_first_use = bool(enabled)
+        if self.is_first_use:
+            self._privacy_notice_shown = False
+        self._write_setting("is_first_use", self.is_first_use)
+        self.first_use_changed.emit(self.is_first_use)
+        state = "started" if self.is_first_use else "dismissed"
+        self.status_changed.emit(f"First-time setup guide {state}.")
+
+    def request_dark_mode_change(self, enabled: bool) -> None:
+        self.dark_mode_enabled = bool(enabled)
+        self._write_setting("dark_mode", self.dark_mode_enabled)
+        self.dark_mode_changed.emit(self.dark_mode_enabled)
+
     def request_refresh(self, refresh_mode: str = "both", schedule_day_count: int = 1) -> None:
         if not self.is_logged_in:
             self.validation_failed.emit("Please login before refreshing academic information.")
@@ -104,6 +122,9 @@ class UserInputModule(QObject):
         self.auto_login_changed.emit(self.auto_login_enabled)
         display_name = user_settings.get("student", {}).get("display_name", "student")
         self.status_changed.emit(f"Login succeeded for {display_name}.")
+        self._request_privacy_notice_if_needed()
+
+    def _handle_refresh_success(self, _: dict) -> None:
         self._complete_first_use_if_needed()
 
     def _handle_login_failure(self, message: str) -> None:
@@ -118,15 +139,17 @@ class UserInputModule(QObject):
         settings = self._read_settings()
         self.auto_login_enabled = bool(settings.get("auto_login", False))
         self.is_first_use = bool(settings.get("is_first_use", True))
+        self.dark_mode_enabled = bool(settings.get("dark_mode", False))
         self.is_logged_in = self.auto_login_enabled
 
     def emit_initial_state(self) -> None:
         self.content_access_changed.emit(self.is_logged_in)
         self.auto_login_changed.emit(self.auto_login_enabled)
         self.first_use_changed.emit(self.is_first_use)
+        self.dark_mode_changed.emit(self.dark_mode_enabled)
         if self.is_logged_in:
             self.status_changed.emit("Auto login is enabled. Showing local academic information.")
-            self._complete_first_use_if_needed()
+            self._request_privacy_notice_if_needed()
         else:
             self.status_changed.emit("Login is required before viewing academic information.")
 
@@ -150,10 +173,19 @@ class UserInputModule(QObject):
         if not self.is_first_use:
             return
 
-        self.privacy_notice_requested.emit()
         self.is_first_use = False
         self._write_setting("is_first_use", False)
         self.first_use_changed.emit(False)
+
+    def _request_privacy_notice_if_needed(self) -> None:
+        if not self.is_first_use or self._privacy_notice_shown:
+            return
+
+        self._privacy_notice_shown = True
+        self.privacy_notice_requested.emit()
+
+    def restart_first_use(self) -> None:
+        self.request_first_use_change(True)
 
     def _write_setting(self, name: str, value: bool) -> None:
         settings = self._read_settings()

@@ -7,6 +7,7 @@ connected.
 
 from __future__ import annotations
 
+import re
 import sys
 from datetime import date, datetime
 from typing import Any
@@ -227,6 +228,9 @@ class SmartLearningWindow(QMainWindow):
         self.status_error_display.set_dialog_parent(self)
         self.current_courses: list[dict[str, Any]] = []
         self.current_schedule_days: list[dict[str, Any]] = []
+        self.has_configured_account = False
+        self.onboarding_active = False
+        self.onboarding_step = 1
 
         self.setWindowTitle("Smart Learning")
         self.setMinimumSize(980, 680)
@@ -235,6 +239,7 @@ class SmartLearningWindow(QMainWindow):
         self._build_ui()
         self._connect_signal_board()
         self.render_academic_info(self.academic_info)
+        self.data_access_module.request_user_settings()
         self.data_access_module.request_academic_info()
         self.input_module.emit_initial_state()
 
@@ -248,12 +253,14 @@ class SmartLearningWindow(QMainWindow):
         main_layout.setSpacing(16)
 
         main_layout.addWidget(self._build_header())
-        main_layout.addWidget(self._build_help_hint())
+        self.help_hint = self._build_help_hint()
+        main_layout.addWidget(self.help_hint)
+        self.onboarding_panel = self._build_onboarding_panel()
+        main_layout.addWidget(self.onboarding_panel)
         main_layout.addWidget(self._build_content_area(), stretch=1)
         main_layout.addWidget(self._build_status_bar())
 
-        self.setStyleSheet(
-            """
+        self._base_stylesheet = """
             QWidget {
                 background: #f6f7f9;
                 color: #20242a;
@@ -286,6 +293,30 @@ class SmartLearningWindow(QMainWindow):
                 font-weight: 700;
                 padding: 10px 12px;
             }
+            QFrame#onboardingPanel {
+                background: #fff8e8;
+                border: 2px solid #e8a126;
+                border-radius: 10px;
+            }
+            QLabel#onboardingTitle {
+                background: transparent;
+                color: #744500;
+                font-size: 17px;
+                font-weight: 700;
+            }
+            QLabel#onboardingProgress {
+                background: #ffffff;
+                border: 1px solid #e4c27d;
+                border-radius: 6px;
+                color: #6a4a12;
+                font-weight: 700;
+                padding: 6px 9px;
+            }
+            QLabel#onboardingBody {
+                background: transparent;
+                color: #4d3a17;
+                font-weight: 600;
+            }
             QLabel#mutedText {
                 color: #667085;
             }
@@ -302,11 +333,42 @@ class SmartLearningWindow(QMainWindow):
                 left: 12px;
                 padding: 0 4px;
             }
+            QGroupBox#accountManagement {
+                background: #f7f3ff;
+                border: 2px solid #b8a3e8;
+            }
             QLineEdit {
                 background: #ffffff;
                 border: 1px solid #cbd3df;
                 border-radius: 6px;
                 padding: 8px 10px;
+            }
+            QCheckBox {
+                background: #ffffff;
+                border: 2px solid #98a6b8;
+                border-radius: 7px;
+                color: #283442;
+                font-weight: 600;
+                padding: 7px 10px;
+                spacing: 8px;
+            }
+            QCheckBox:hover {
+                background: #f4f8ff;
+                border-color: #2364c8;
+            }
+            QCheckBox:checked {
+                background: #dceaff;
+                border-color: #2364c8;
+                color: #174b91;
+            }
+            QCheckBox:disabled {
+                background: #edf0f4;
+                border-color: #aeb8c5;
+                color: #4b5563;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
             }
             QPushButton {
                 background: #ffffff;
@@ -319,6 +381,36 @@ class SmartLearningWindow(QMainWindow):
                 background: #2364c8;
                 border-color: #2364c8;
                 color: #ffffff;
+            }
+            QPushButton#accountButton {
+                background: #6842c2;
+                border: 2px solid #5533a6;
+                color: #ffffff;
+                font-weight: 700;
+                min-width: 190px;
+            }
+            QPushButton#accountButton:hover {
+                background: #7a52d1;
+                border-color: #40227f;
+            }
+            QPushButton#onboardingAction {
+                background: #e89a18;
+                border: 2px solid #b86e00;
+                color: #ffffff;
+                font-weight: 700;
+                min-width: 160px;
+            }
+            QPushButton#onboardingAction:hover {
+                background: #f2aa31;
+            }
+            QPushButton#accountButton[onboardingTarget="true"],
+            QPushButton#loginButton[onboardingTarget="true"],
+            QPushButton#primaryButton[onboardingTarget="true"] {
+                border: 3px solid #f0a020;
+            }
+            QLineEdit[onboardingTarget="true"] {
+                border: 3px solid #f0a020;
+                background: #fffdf5;
             }
             QPushButton#helpButton {
                 background: #f5a623;
@@ -363,13 +455,84 @@ class SmartLearningWindow(QMainWindow):
             }
             QFrame#scheduleCard {
                 background: #ffffff;
-                border: 1px solid #d7dce3;
-                border-radius: 8px;
+                border: 1px solid #cbd8ea;
+                border-radius: 12px;
+            }
+            QFrame#scheduleCard[cardVariant="alternate"] {
+                background: #fcfbff;
+                border-color: #d8cbed;
+            }
+            QFrame#scheduleAccent {
+                background: #2364c8;
+                border: none;
+                border-radius: 3px;
+            }
+            QFrame#scheduleAccent[accentVariant="alternate"] {
+                background: #7650c7;
+            }
+            QFrame#scheduleDetails {
+                background: #f4f7fb;
+                border: 1px solid #e0e7f0;
+                border-radius: 7px;
             }
             QFrame#scheduleDaySection {
-                background: #f8fafc;
-                border: 1px solid #d7dce3;
+                background: #f8fbff;
+                border: 1px solid #c7d8ee;
+                border-radius: 12px;
+            }
+            QFrame#scheduleDayBanner {
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 0,
+                    stop: 0 #1f5fbf, stop: 1 #4e7fd0
+                );
+                border: none;
+                border-radius: 9px;
+            }
+            QLabel#scheduleDateTitle {
+                background: transparent;
+                color: #ffffff;
+                font-size: 18px;
+                font-weight: 700;
+            }
+            QLabel#scheduleDayBadge {
+                background: #ffffff;
+                border: 1px solid #d9e6f8;
+                border-radius: 7px;
+                color: #174b91;
+                font-weight: 700;
+                padding: 6px 10px;
+            }
+            QLabel#scheduleTime {
+                background: #e5efff;
+                border: 1px solid #9bb9e8;
+                border-radius: 7px;
+                color: #174b91;
+                font-weight: 700;
+                padding: 6px 9px;
+            }
+            QLabel#scheduleCourseTitle {
+                background: transparent;
+                color: #202a38;
+                font-size: 16px;
+                font-weight: 700;
+            }
+            QLabel#scheduleBlockBadge {
+                background: #fff0d6;
+                border: 2px solid #e7a32f;
                 border-radius: 8px;
+                color: #704200;
+                font-weight: 700;
+                padding: 6px 10px;
+            }
+            QLabel#scheduleTeacher {
+                background: transparent;
+                color: #52657d;
+                font-weight: 600;
+            }
+            QLabel#scheduleDetailKey {
+                background: transparent;
+                color: #52657d;
+                font-weight: 700;
             }
             QFrame#statusFrame {
                 background: #ffffff;
@@ -398,6 +561,204 @@ class SmartLearningWindow(QMainWindow):
                 color: #1f5fbf;
             }
             """
+        self.setStyleSheet(self._base_stylesheet)
+
+    def _dark_theme_stylesheet(self) -> str:
+        return """
+            QWidget {
+                background: #161b22;
+                color: #e6edf3;
+            }
+            QLabel {
+                background: transparent;
+            }
+            QLabel#appTitle {
+                color: #79b8ff;
+            }
+            QLabel#mutedText {
+                color: #9eafc2;
+            }
+            QLabel#loginNotice {
+                background: #392d15;
+                border-color: #bd8427;
+                color: #ffd98c;
+            }
+            QLabel#helpHint {
+                background: #172b45;
+                border-color: #4e8ed8;
+                color: #cce3ff;
+            }
+            QFrame#onboardingPanel {
+                background: #332711;
+                border-color: #d28b1d;
+            }
+            QLabel#onboardingTitle,
+            QLabel#onboardingBody {
+                color: #ffe1a3;
+            }
+            QLabel#onboardingProgress {
+                background: #211c14;
+                border-color: #8e6b2d;
+                color: #ffd98c;
+            }
+            QGroupBox {
+                background: #1d232d;
+                border-color: #3b4655;
+            }
+            QGroupBox#accountManagement {
+                background: #28213a;
+                border-color: #7958bd;
+            }
+            QLineEdit,
+            QComboBox {
+                background: #10151c;
+                border-color: #536174;
+                color: #f0f4f8;
+            }
+            QComboBox QAbstractItemView {
+                background: #1d232d;
+                color: #f0f4f8;
+                selection-background-color: #285f9e;
+            }
+            QCheckBox {
+                background: #202733;
+                border-color: #536174;
+                color: #e6edf3;
+            }
+            QCheckBox:hover {
+                background: #263448;
+                border-color: #64a6ed;
+            }
+            QCheckBox:checked {
+                background: #18375e;
+                border-color: #64a6ed;
+                color: #d9ecff;
+            }
+            QCheckBox:disabled {
+                background: #252b34;
+                border-color: #46515f;
+                color: #8c99a8;
+            }
+            QPushButton {
+                background: #252d38;
+                border-color: #536174;
+                color: #edf2f7;
+            }
+            QPushButton:hover {
+                background: #303a48;
+                border-color: #64a6ed;
+            }
+            QPushButton#primaryButton {
+                background: #2c70c9;
+                border-color: #5c9dea;
+                color: #ffffff;
+            }
+            QPushButton#accountButton {
+                background: #7250c7;
+                border-color: #a287e0;
+                color: #ffffff;
+            }
+            QPushButton#dangerButton {
+                background: #302024;
+                border-color: #e06c75;
+                color: #ff9da5;
+            }
+            QPushButton#themeToggle {
+                background: #252d38;
+                border-color: #536174;
+                color: #f2d479;
+            }
+            QFrame#courseCard,
+            QFrame#assignmentCard,
+            QFrame#filterPanel,
+            QFrame#scheduleCard,
+            QFrame#scheduleDaySection,
+            QFrame#statusFrame {
+                background: #1d232d;
+                border-color: #3b4655;
+            }
+            QFrame#scheduleCard[cardVariant="alternate"] {
+                background: #221f2d;
+                border-color: #56466d;
+            }
+            QFrame#scheduleDetails {
+                background: #151b23;
+                border-color: #364252;
+            }
+            QLabel#scheduleCourseTitle {
+                color: #f1f5fa;
+            }
+            QLabel#scheduleTeacher,
+            QLabel#scheduleDetailKey {
+                color: #aabbd0;
+            }
+            QLabel#scheduleTime {
+                background: #193b64;
+                border-color: #487ebd;
+                color: #cfe7ff;
+            }
+            QLabel#scheduleBlockBadge {
+                background: #3a2a11;
+                border-color: #d99525;
+                color: #ffd181;
+            }
+            QLabel#scheduleDayBadge {
+                background: #182536;
+                border-color: #6b91c2;
+                color: #d9eaff;
+            }
+            QTabWidget::pane {
+                background: #161b22;
+                border-color: #3b4655;
+            }
+            QTabBar::tab {
+                background: #242b35;
+                border-color: #3b4655;
+                color: #abb8c7;
+            }
+            QTabBar::tab:selected {
+                background: #1d232d;
+                color: #79b8ff;
+            }
+            QScrollArea,
+            QScrollArea > QWidget > QWidget {
+                background: #161b22;
+            }
+            QScrollBar:vertical {
+                background: #161b22;
+                width: 12px;
+            }
+            QScrollBar::handle:vertical {
+                background: #4b5868;
+                border-radius: 5px;
+                min-height: 24px;
+            }
+        """
+
+    def _scoped_dark_theme_stylesheet(self) -> str:
+        """Raise dark-theme selector priority without duplicating the base stylesheet."""
+
+        def scope_rule(match: re.Match[str]) -> str:
+            boundary, selectors = match.groups()
+            scoped_selectors = []
+            for selector in selectors.split(","):
+                selector = selector.strip()
+                if selector:
+                    scoped_selectors.append(
+                        f'QWidget#root[darkMode="true"] {selector}'
+                    )
+            return f"{boundary}\n{', '.join(scoped_selectors)} {{"
+
+        scoped_rules = re.sub(
+            r"(^|})\s*([^{}]+)\{",
+            scope_rule,
+            self._dark_theme_stylesheet(),
+        )
+        return (
+            'QWidget#root[darkMode="true"] {'
+            "background: #161b22; color: #e6edf3;"
+            "}"
+            + scoped_rules
         )
 
     '''因为有3个tab，因此分开渲染，这里是顶部不变的展示条'''
@@ -413,9 +774,21 @@ class SmartLearningWindow(QMainWindow):
 
         self.help_button = QPushButton("Help / 使用教程")
         self.help_button.setObjectName("helpButton")
+        self.theme_toggle = QPushButton("☾ Dark")
+        self.theme_toggle.setObjectName("themeToggle")
+        self.theme_toggle.setCheckable(True)
+        self.theme_toggle.setFixedWidth(88)
+        self.theme_toggle.setToolTip("Switch between light and dark themes")
         self.logout_button = QPushButton("Log out")
+        self.login_state_label = QLabel()
+        self.login_state_label.setToolTip(
+            "Shows whether locally stored academic data is currently unlocked."
+        )
+        self._set_login_status(False)
 
         layout.addLayout(title_area, stretch=1)
+        layout.addWidget(self.theme_toggle)
+        layout.addWidget(self.login_state_label)
         layout.addWidget(self.help_button)
         layout.addWidget(self.logout_button)
         return header
@@ -428,6 +801,35 @@ class SmartLearningWindow(QMainWindow):
         hint.setObjectName("helpHint")
         hint.setWordWrap(True)
         return hint
+
+    def _build_onboarding_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("onboardingPanel")
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(14, 11, 14, 11)
+        layout.setSpacing(14)
+
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(5)
+        self.onboarding_title = QLabel()
+        self.onboarding_title.setObjectName("onboardingTitle")
+        self.onboarding_progress = QLabel()
+        self.onboarding_progress.setObjectName("onboardingProgress")
+        self.onboarding_body = QLabel()
+        self.onboarding_body.setObjectName("onboardingBody")
+        self.onboarding_body.setWordWrap(True)
+        text_layout.addWidget(self.onboarding_title)
+        text_layout.addWidget(self.onboarding_progress)
+        text_layout.addWidget(self.onboarding_body)
+
+        self.onboarding_action_button = QPushButton()
+        self.onboarding_action_button.setObjectName("onboardingAction")
+        self.onboarding_action_button.clicked.connect(self._run_onboarding_action)
+
+        layout.addLayout(text_layout, stretch=1)
+        layout.addWidget(self.onboarding_action_button)
+        panel.hide()
+        return panel
 
     def _build_input_panel(self) -> QGroupBox:
         panel = QGroupBox("Account and Data Controls")
@@ -445,6 +847,7 @@ class SmartLearningWindow(QMainWindow):
         self.password_visibility_button.setToolTip("Show or hide the password")
 
         self.login_button = QPushButton("Login")
+        self.login_button.setObjectName("loginButton")
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.setObjectName("primaryButton")
         self.refresh_mode_selector = QComboBox()
@@ -456,15 +859,21 @@ class SmartLearningWindow(QMainWindow):
         for day_count in (1, 3, 5, 7, 14, 31):
             self.schedule_day_count_selector.addItem(f"{day_count} day(s)", day_count)
         self.schedule_day_count_selector.setMinimumWidth(120)
-        self.update_auth_button = QPushButton("Change Email/Password")
+        self.update_auth_button = QPushButton("Create a New Account")
+        self.update_auth_button.setObjectName("accountButton")
         self.auto_login_checkbox = QCheckBox("Auto login on startup")
+        self.auto_login_checkbox.setToolTip(
+            "Automatically unlock locally stored data when the application starts."
+        )
         self.first_use_checkbox = QCheckBox("First time using this application")
-        self.first_use_checkbox.setEnabled(False)
+        self.first_use_checkbox.setToolTip(
+            "Check to start the setup guide, or uncheck to dismiss it."
+        )
         self.delete_local_data_button = QPushButton("Delete Local Data")
         self.delete_local_data_button.setObjectName("dangerButton")
         self.reset_local_data_button = QPushButton("Forgot Password / Reset App")
         self.reset_local_data_button.setObjectName("dangerButton")
-        self.login_notice = QLabel("请使用与 TigerNet 登录相同的账号和密码")
+        self.login_notice = QLabel("请使用与 TigerNet 登录相同的邮箱和密码")
         self.login_notice.setObjectName("loginNotice")
         self.login_notice.setWordWrap(True)
 
@@ -488,17 +897,21 @@ class SmartLearningWindow(QMainWindow):
         preference_row.addWidget(self.first_use_checkbox)
         preference_row.addStretch(1)
 
-        action_row = QHBoxLayout()
-        action_row.addWidget(self.update_auth_button)
-        action_row.addWidget(self.delete_local_data_button)
-        action_row.addWidget(self.reset_local_data_button)
-        action_row.addStretch(1)
-
+        layout.addWidget(self.login_notice)
         layout.addLayout(login_row)
         layout.addLayout(refresh_row)
         layout.addLayout(preference_row)
-        layout.addLayout(action_row)
-        layout.addWidget(self.login_notice)
+        return panel
+
+    def _build_account_management_panel(self) -> QGroupBox:
+        panel = QGroupBox("Account Management")
+        panel.setObjectName("accountManagement")
+        layout = QHBoxLayout(panel)
+        layout.setSpacing(10)
+        layout.addWidget(self.update_auth_button)
+        layout.addWidget(self.delete_local_data_button)
+        layout.addWidget(self.reset_local_data_button)
+        layout.addStretch(1)
         return panel
 
     def _build_content_area(self) -> QTabWidget:
@@ -519,15 +932,34 @@ class SmartLearningWindow(QMainWindow):
     def _build_basic_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(14)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        layout.addWidget(self._build_input_panel())
+        self.basic_content = QWidget()
+        content_layout = QVBoxLayout(self.basic_content)
+        content_layout.setContentsMargins(14, 14, 14, 14)
+        content_layout.setSpacing(14)
+        self.basic_content.setMinimumHeight(475)
+
+        input_panel = self._build_input_panel()
+        self.account_controls_group = input_panel
+        self.account_controls_group.setMinimumHeight(215)
+        self.account_management_group = self._build_account_management_panel()
+        self.account_management_group.setMinimumHeight(90)
+        content_layout.addWidget(self.account_management_group)
+        content_layout.addWidget(input_panel)
         self.profile_group = QGroupBox("Student Overview")
+        self.profile_group.setMinimumHeight(95)
         self.profile_layout = QGridLayout(self.profile_group)
 
-        layout.addWidget(self.profile_group)
-        layout.addStretch(1)
+        content_layout.addWidget(self.profile_group)
+        content_layout.addStretch(1)
+
+        self.basic_scroll = QScrollArea()
+        self.basic_scroll.setObjectName("basicScroll")
+        self.basic_scroll.setWidgetResizable(True)
+        self.basic_scroll.setFrameShape(NO_FRAME)
+        self.basic_scroll.setWidget(self.basic_content)
+        layout.addWidget(self.basic_scroll)
         return tab
 
     def _build_schedule_tab(self) -> QWidget:
@@ -618,21 +1050,25 @@ class SmartLearningWindow(QMainWindow):
         self.login_button.clicked.connect(self._send_login_input)
         self.password_visibility_button.toggled.connect(self._set_password_visibility)
         self.update_auth_button.clicked.connect(self._update_auth_credentials)
+        self.theme_toggle.toggled.connect(self.input_module.request_dark_mode_change)
         self.auto_login_checkbox.toggled.connect(self.input_module.request_auto_login_change)
+        self.first_use_checkbox.toggled.connect(self.input_module.request_first_use_change)
         self.delete_local_data_button.clicked.connect(self._delete_local_data)
         self.reset_local_data_button.clicked.connect(self._reset_local_data)
         self.input_module.content_access_changed.connect(self._set_content_access)
         self.input_module.auto_login_changed.connect(self._set_auto_login_checkbox)
         self.input_module.first_use_changed.connect(self._set_first_use_checkbox)
+        self.input_module.dark_mode_changed.connect(self._set_dark_mode)
         self.input_module.privacy_notice_requested.connect(self._show_privacy_notice)
         self.input_module.validation_failed.connect(self.status_error_display.display_error)
         self.input_module.status_changed.connect(self.status_error_display.display_status)
         self.request_module.request_queued.connect(self.status_error_display.display_status)
         self.request_module.request_failed.connect(self.status_error_display.display_error)
         self.request_module.login_succeeded.connect(self._handle_login_succeeded)
-        self.request_module.refresh_succeeded.connect(self.render_academic_info)
+        self.request_module.refresh_succeeded.connect(self._handle_refresh_succeeded)
         self.input_module.logout_requested.connect(self._clear_login_inputs)
         self.data_access_module.all_data_loaded.connect(self._show_data_access_result)
+        self.data_access_module.user_settings_loaded.connect(self._handle_user_settings_loaded)
         self.data_access_module.academic_info_loaded.connect(self.render_academic_info)
         self.data_access_module.data_access_failed.connect(self.status_error_display.display_error)
         self.data_access_module.auth_credentials_updated.connect(self._show_auth_update_success)
@@ -685,10 +1121,9 @@ class SmartLearningWindow(QMainWindow):
             (
                 "Account Setup",
                 "First setup\n"
-                "1. Select Change Email/Password.\n"
-                "2. Leave Current password empty when no account has been configured.\n"
-                "3. Enter the same TigerNet email or student ID and password used on the school website.\n"
-                "4. Enter those credentials in the login fields to unlock the application.\n\n"
+                "1. Select Create a New Account.\n"
+                "2. Enter the same TigerNet email address and password used on the school website.\n"
+                "3. Enter those credentials in the login fields to unlock the application.\n\n"
                 "Later changes require the currently stored password. If it has been forgotten, use "
                 "Forgot Password / Reset App. Resetting removes all local login and academic data before a new account can be configured.",
             ),
@@ -794,6 +1229,11 @@ class SmartLearningWindow(QMainWindow):
                 "last_updated": self.academic_info.get("last_updated", "Never"),
             }
         )
+        if self.onboarding_active:
+            self._show_onboarding_step(3)
+
+    def _handle_refresh_succeeded(self, academic_info: dict[str, Any]) -> None:
+        self.render_academic_info(academic_info)
 
     def _clear_login_inputs(self) -> None:
         self.student_id_input.clear()
@@ -808,18 +1248,22 @@ class SmartLearningWindow(QMainWindow):
         self.password_visibility_button.setText("Hide" if visible else "Show")
 
     def _update_auth_credentials(self) -> None:
-        current_password, current_password_ok = QInputDialog.getText(
-            self,
-            "Authorize Credential Change",
-            "Current password (leave blank only if no credentials are configured):",
-            ECHO_PASSWORD,
-        )
-        if not current_password_ok:
-            return
+        current_password = ""
+        dialog_title = "Create a New Account"
+        if self.has_configured_account:
+            dialog_title = "Change TigerNet Login"
+            current_password, current_password_ok = QInputDialog.getText(
+                self,
+                "Authorize Credential Change",
+                "Current password:",
+                ECHO_PASSWORD,
+            )
+            if not current_password_ok:
+                return
 
         username, username_ok = QInputDialog.getText(
             self,
-            "Change TigerNet Login",
+            dialog_title,
             "Email Address:",
         )
         if not username_ok:
@@ -827,7 +1271,7 @@ class SmartLearningWindow(QMainWindow):
 
         password, password_ok = QInputDialog.getText(
             self,
-            "Change TigerNet Login",
+            dialog_title,
             "Password:",
             ECHO_PASSWORD,
         )
@@ -865,7 +1309,9 @@ class SmartLearningWindow(QMainWindow):
     def _handle_local_data_deleted(self) -> None:
         self.academic_info = {}
         self.render_academic_info({})
+        self._set_account_configuration_state(False)
         self.input_module.request_logout()
+        self.input_module.restart_first_use()
         self.status_error_display.display_status("Local data and login information deleted.")
         QMessageBox.information(self, "Smart Learning", "Local data and login information deleted.")
 
@@ -898,8 +1344,32 @@ class SmartLearningWindow(QMainWindow):
         self.auto_login_checkbox.setChecked(enabled)
         self.auto_login_checkbox.blockSignals(False)
 
+    def _set_dark_mode(self, enabled: bool) -> None:
+        self.theme_toggle.blockSignals(True)
+        self.theme_toggle.setChecked(enabled)
+        self.theme_toggle.setText("☀ Light" if enabled else "☾ Dark")
+        self.theme_toggle.blockSignals(False)
+        self.centralWidget().setProperty("darkMode", "true" if enabled else "false")
+        stylesheet = self._base_stylesheet
+        if enabled:
+            stylesheet += self._scoped_dark_theme_stylesheet()
+        self.setStyleSheet(stylesheet)
+
+        tab_stylesheet = self._dark_theme_stylesheet() if enabled else ""
+        for tab in (self.basic_tab, self.schedule_tab, self.course_tab):
+            tab.setStyleSheet(tab_stylesheet)
+
     def _set_first_use_checkbox(self, enabled: bool) -> None:
+        self.first_use_checkbox.blockSignals(True)
         self.first_use_checkbox.setChecked(enabled)
+        self.first_use_checkbox.blockSignals(False)
+        self.onboarding_active = enabled
+        self.onboarding_panel.setVisible(enabled)
+        self.help_hint.setVisible(not enabled)
+        if enabled:
+            self._sync_onboarding_step()
+        else:
+            self._clear_onboarding_targets()
 
     def _show_privacy_notice(self) -> None:
         QMessageBox.information(
@@ -912,10 +1382,137 @@ class SmartLearningWindow(QMainWindow):
         )
 
     def _show_auth_update_success(self) -> None:
-        self.status_error_display.display_status("TigerNet login credentials updated.")
-        QMessageBox.information(self, "Smart Learning", "TigerNet login credentials updated.")
+        account_was_configured = self.has_configured_account
+        self._set_account_configuration_state(True)
+        if account_was_configured:
+            message = "TigerNet login credentials updated."
+        else:
+            message = "Smart Learning account created using your TigerNet credentials."
+        self.status_error_display.display_status(message)
+        QMessageBox.information(self, "Smart Learning", message)
+
+    def _handle_user_settings_loaded(self, user_settings: dict[str, Any]) -> None:
+        auth = user_settings.get("auth", {})
+        has_credentials = bool(
+            isinstance(auth, dict)
+            and str(auth.get("student_id", "")).strip()
+            and str(auth.get("password", ""))
+        )
+        self._set_account_configuration_state(has_credentials)
+
+    def _set_account_configuration_state(self, configured: bool) -> None:
+        self.has_configured_account = configured
+        button_text = "Change Email/Password" if configured else "Create a New Account"
+        self.update_auth_button.setText(button_text)
+        if self.onboarding_active:
+            self._sync_onboarding_step()
+
+    def _sync_onboarding_step(self) -> None:
+        if self.input_module.is_logged_in:
+            step = 3
+        elif self.has_configured_account:
+            step = 2
+        else:
+            step = 1
+        self._show_onboarding_step(step)
+
+    def _show_onboarding_step(self, step: int) -> None:
+        if not self.onboarding_active:
+            return
+
+        self.onboarding_step = max(1, min(step, 3))
+        step_content = {
+            1: (
+                "第 1 步：创建账户",
+                "点击 Create a New Account，并保存与 TigerNet 相同的邮箱和密码。",
+                "Create Account",
+            ),
+            2: (
+                "第 2 步：登录",
+                "在下方输入同一个 TigerNet 邮箱和密码，然后点击 Login。",
+                "Go to Login",
+            ),
+            3: (
+                "第 3 步：获取最新数据",
+                "登录成功。选择要获取的数据和天数，然后点击 Refresh 完成设置。",
+                "Refresh Now",
+            ),
+        }
+        title, body, action = step_content[self.onboarding_step]
+        markers = []
+        for index, label in enumerate(("创建账户", "登录", "刷新"), start=1):
+            marker = "✓" if index < self.onboarding_step else "●" if index == self.onboarding_step else "○"
+            markers.append(f"{marker} {label}")
+
+        self.onboarding_title.setText(f"首次使用引导 · {title}")
+        self.onboarding_progress.setText("   →   ".join(markers))
+        self.onboarding_body.setText(body)
+        self.onboarding_action_button.setText(action)
+        self.onboarding_panel.show()
+        self.help_hint.hide()
+        self._update_onboarding_targets()
+
+    def _run_onboarding_action(self) -> None:
+        self.tabs.setCurrentIndex(0)
+        if self.onboarding_step == 1:
+            self.update_auth_button.click()
+        elif self.onboarding_step == 2:
+            self.student_id_input.setFocus()
+        else:
+            self.refresh_button.click()
+
+    def _update_onboarding_targets(self) -> None:
+        self._clear_onboarding_targets()
+        if self.onboarding_step == 1:
+            targets = (self.update_auth_button,)
+        elif self.onboarding_step == 2:
+            targets = (self.student_id_input, self.password_input, self.login_button)
+        else:
+            targets = (self.refresh_button,)
+
+        for widget in targets:
+            self._set_onboarding_target(widget, True)
+
+    def _clear_onboarding_targets(self) -> None:
+        targets = (
+            self.update_auth_button,
+            self.student_id_input,
+            self.password_input,
+            self.login_button,
+            self.refresh_button,
+        )
+        for widget in targets:
+            self._set_onboarding_target(widget, False)
+
+    def _set_onboarding_target(self, widget: QWidget, enabled: bool) -> None:
+        widget.setProperty("onboardingTarget", "true" if enabled else "false")
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
+
+    def _set_login_status(self, logged_in: bool) -> None:
+        if logged_in:
+            text = "● Logged In"
+            background = "#e5f6eb"
+            border = "#2e8b57"
+            foreground = "#17623b"
+        else:
+            text = "● Not Logged In"
+            background = "#fff3dc"
+            border = "#d89020"
+            foreground = "#7a4700"
+
+        self.login_state_label.setText(text)
+        self.login_state_label.setStyleSheet(
+            "QLabel {"
+            f"background: {background}; border: 2px solid {border}; "
+            f"color: {foreground}; border-radius: 7px; "
+            "font-weight: 700; padding: 7px 11px;"
+            "}"
+        )
 
     def _set_content_access(self, can_view_content: bool) -> None:
+        self._set_login_status(can_view_content)
         self.tabs.setTabEnabled(1, can_view_content)
         self.tabs.setTabEnabled(2, can_view_content)
         self.logout_button.setEnabled(can_view_content)
@@ -925,6 +1522,9 @@ class SmartLearningWindow(QMainWindow):
         self.auto_login_checkbox.setEnabled(can_view_content)
         self.delete_local_data_button.setEnabled(can_view_content)
         self.login_button.setEnabled(not can_view_content)
+
+        if self.onboarding_active:
+            self._sync_onboarding_step()
 
         if can_view_content:
             self.tabs.setCurrentIndex(1)
@@ -1235,63 +1835,105 @@ class SmartLearningWindow(QMainWindow):
         layout.setContentsMargins(14, 12, 14, 14)
         layout.setSpacing(10)
 
-        header = QHBoxLayout()
+        day_banner = QFrame()
+        day_banner.setObjectName("scheduleDayBanner")
+        header = QHBoxLayout(day_banner)
+        header.setContentsMargins(14, 10, 14, 10)
         date = QLabel(str(day.get("date", "Date unavailable")))
-        date.setObjectName("sectionTitle")
+        date.setObjectName("scheduleDateTitle")
         day_type = QLabel(str(day.get("day_type", "Day type unavailable")))
-        day_type.setObjectName("mutedText")
+        day_type.setObjectName("scheduleDayBadge")
 
         header.addWidget(date)
         header.addStretch(1)
         header.addWidget(day_type)
-        layout.addLayout(header)
+        layout.addWidget(day_banner)
 
         classes = day.get("classes", [])
         if not classes:
             layout.addWidget(QLabel("No classes listed for this day."))
             return frame
 
-        for item in classes:
-            layout.addWidget(self._schedule_card(item))
+        schedule_date = self._display_schedule_date(day.get("date", ""))
+        for index, item in enumerate(classes):
+            card = self._schedule_card(item, schedule_date, alternate=bool(index % 2))
+            layout.addWidget(card)
         return frame
 
-    def _schedule_card(self, item: dict[str, Any]) -> QFrame:
+    def _schedule_card(
+        self,
+        item: dict[str, Any],
+        schedule_date: str = "",
+        *,
+        alternate: bool = False,
+    ) -> QFrame:
         frame = QFrame()
         frame.setObjectName("scheduleCard")
-        layout = QGridLayout(frame)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setHorizontalSpacing(18)
-        layout.setVerticalSpacing(6)
+        if alternate:
+            frame.setProperty("cardVariant", "alternate")
+        card_layout = QHBoxLayout(frame)
+        card_layout.setContentsMargins(8, 10, 12, 10)
+        card_layout.setSpacing(12)
+
+        accent = QFrame()
+        accent.setObjectName("scheduleAccent")
+        accent.setFixedWidth(6)
+        if alternate:
+            accent.setProperty("accentVariant", "alternate")
+        card_layout.addWidget(accent)
+
+        content_layout = QVBoxLayout()
+        content_layout.setSpacing(8)
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(10)
 
         time = QLabel(str(item.get("time", "Time unavailable")))
-        time.setObjectName("sectionTitle")
+        time.setObjectName("scheduleTime")
         course_name = QLabel(str(item.get("course_name", item.get("title", "Course unavailable"))))
-        course_name.setObjectName("sectionTitle")
+        course_name.setObjectName("scheduleCourseTitle")
         course_name.setWordWrap(True)
-        block = QLabel(f"Block: {item.get('block', 'N/A')}")
-        teacher = QLabel(f"Teacher: {item.get('teacher', 'Unavailable')}")
-        teacher.setObjectName("mutedText")
+        block_value = self._field_text(item.get("block", "")) or "--"
+        date_and_block = (
+            f"{schedule_date}  •  Block {block_value}"
+            if schedule_date
+            else f"Block {block_value}"
+        )
+        block = QLabel(date_and_block)
+        block.setObjectName("scheduleBlockBadge")
+        teacher = QLabel(f"Teacher  ·  {item.get('teacher', 'Unavailable')}")
+        teacher.setObjectName("scheduleTeacher")
 
-        layout.addWidget(time, 0, 0)
-        layout.addWidget(course_name, 0, 1)
-        layout.addWidget(block, 0, 2)
-        layout.addWidget(teacher, 1, 1)
+        header_layout.addWidget(time)
+        header_layout.addWidget(course_name, stretch=1)
+        header_layout.addWidget(block)
+        content_layout.addLayout(header_layout)
+        content_layout.addWidget(teacher)
         detail_fields = self._schedule_detail_fields(item)
         if detail_fields:
-            detail_layout = QGridLayout()
+            detail_panel = QFrame()
+            detail_panel.setObjectName("scheduleDetails")
+            detail_layout = QGridLayout(detail_panel)
+            detail_layout.setContentsMargins(10, 8, 10, 8)
             detail_layout.setHorizontalSpacing(14)
-            detail_layout.setVerticalSpacing(4)
+            detail_layout.setVerticalSpacing(6)
             for row, (label, value) in enumerate(detail_fields):
                 key_label = QLabel(label)
-                key_label.setObjectName("mutedText")
+                key_label.setObjectName("scheduleDetailKey")
                 value_label = QLabel(value)
                 value_label.setWordWrap(True)
                 detail_layout.addWidget(key_label, row, 0)
                 detail_layout.addWidget(value_label, row, 1)
             detail_layout.setColumnStretch(1, 1)
-            layout.addLayout(detail_layout, 2, 1, 1, 2)
-        layout.setColumnStretch(1, 1)
+            content_layout.addWidget(detail_panel)
+        card_layout.addLayout(content_layout, stretch=1)
         return frame
+
+    def _display_schedule_date(self, value: Any) -> str:
+        parsed_date = self._parse_schedule_date(value)
+        if parsed_date is None:
+            return self._field_text(value)
+
+        return parsed_date.strftime("%b %d, %Y").replace(" 0", " ")
 
     def _schedule_detail_fields(self, item: dict[str, Any]) -> list[tuple[str, str]]:
         fields = item.get("fields", {})
