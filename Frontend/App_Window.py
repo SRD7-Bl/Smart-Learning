@@ -12,17 +12,22 @@ import sys
 from datetime import date, datetime
 from typing import Any
 
+from Backend.Application_Controller import ApplicationController
 from Backend.Data_Access import DataAccessModule
 from Frontend.Input_Module import UserInputModule
 from Frontend.Request_Module import RequestSendingModule
 from Frontend.Status_Error_Display import StatusErrorDisplayModule
 from Frontend.qt_compat import (
     QApplication,
+    CALENDAR_NO_VERTICAL_HEADER,
+    QCalendarWidget,
     ECHO_NORMAL,
     ECHO_PASSWORD,
     MESSAGE_NO,
     MESSAGE_YES,
     NO_FRAME,
+    QColor,
+    QDate,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -38,7 +43,9 @@ from Frontend.qt_compat import (
     QPushButton,
     QScrollArea,
     QTabWidget,
+    QTextCharFormat,
     QVBoxLayout,
+    WEEKDAY_VALUES,
     QWidget,
 )
 
@@ -219,15 +226,39 @@ class SmartLearningWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.academic_info = academic_info or MOCK_ACADEMIC_INFO
-        self.request_module = request_module or RequestSendingModule(self)
-        self.input_module = input_module or UserInputModule(self, request_module=self.request_module)
-        if input_module is not None:
-            self.request_module = input_module.request_module
-        self.data_access_module = data_access_module or DataAccessModule(self)
+        supplied_request_module = input_module.request_module if input_module is not None else request_module
+        supplied_controller = (
+            supplied_request_module.application_controller
+            if supplied_request_module is not None
+            else None
+        )
+        controller_data_access = (
+            supplied_controller.data_access_module
+            if supplied_controller is not None
+            else None
+        )
+        self.data_access_module = data_access_module or controller_data_access or DataAccessModule(self)
+        if supplied_request_module is None:
+            controller = ApplicationController(
+                self,
+                data_access_module=self.data_access_module,
+            )
+            self.request_module = RequestSendingModule(
+                self,
+                application_controller=controller,
+            )
+        else:
+            self.request_module = supplied_request_module
+        self.input_module = input_module or UserInputModule(
+            self,
+            request_module=self.request_module,
+        )
         self.status_error_display = status_error_display or StatusErrorDisplayModule(self, self)
         self.status_error_display.set_dialog_parent(self)
         self.current_courses: list[dict[str, Any]] = []
         self.current_schedule_days: list[dict[str, Any]] = []
+        self.assignment_calendar_items: list[dict[str, Any]] = []
+        self._calendar_marked_dates: set[date] = set()
         self.has_configured_account = False
         self.onboarding_active = False
         self.onboarding_step = 1
@@ -447,6 +478,59 @@ class SmartLearningWindow(QMainWindow):
                 background: #ffffff;
                 border: 1px solid #d7dce3;
                 border-radius: 8px;
+            }
+            QFrame#calendarHeader {
+                background: #eef5ff;
+                border: 1px solid #bfd3ee;
+                border-radius: 9px;
+            }
+            QFrame#calendarHeader QLabel {
+                background: transparent;
+            }
+            QCalendarWidget#assignmentCalendar {
+                background: #ffffff;
+                border: 1px solid #cbd8ea;
+                border-radius: 10px;
+            }
+            QCalendarWidget#assignmentCalendar QToolButton {
+                color: #174b91;
+                background: #eef5ff;
+                border: none;
+                border-radius: 5px;
+                padding: 6px;
+                font-weight: 700;
+            }
+            QCalendarWidget#assignmentCalendar QAbstractItemView:enabled {
+                background: #ffffff;
+                color: #20242a;
+                selection-background-color: #2364c8;
+                selection-color: #ffffff;
+            }
+            QFrame#calendarAssignmentCard {
+                background: #ffffff;
+                border: 1px solid #cbd8ea;
+                border-left: 4px solid #3977c8;
+                border-radius: 8px;
+            }
+            QLabel#calendarDateTitle {
+                color: #174b91;
+                font-size: 17px;
+                font-weight: 700;
+                padding: 3px 0;
+            }
+            QLabel#calendarUndatedTitle {
+                color: #7a4b00;
+                font-size: 15px;
+                font-weight: 700;
+                padding-top: 12px;
+            }
+            QLabel#calendarAssignmentTitle {
+                color: #202a38;
+                font-weight: 700;
+            }
+            QLabel#calendarCourseBadge {
+                color: #2364c8;
+                font-weight: 700;
             }
             QFrame#filterPanel {
                 background: #f8fafc;
@@ -676,6 +760,41 @@ class SmartLearningWindow(QMainWindow):
             QFrame#statusFrame {
                 background: #1d232d;
                 border-color: #3b4655;
+            }
+            QFrame#calendarHeader {
+                background: #172b45;
+                border-color: #3f6f9f;
+            }
+            QCalendarWidget#assignmentCalendar {
+                background: #1d232d;
+                border-color: #3b4655;
+            }
+            QCalendarWidget#assignmentCalendar QToolButton {
+                color: #d9eaff;
+                background: #24364c;
+            }
+            QCalendarWidget#assignmentCalendar QAbstractItemView:enabled {
+                background: #1d232d;
+                color: #e6edf3;
+                selection-background-color: #3977c8;
+                selection-color: #ffffff;
+            }
+            QFrame#calendarAssignmentCard {
+                background: #202733;
+                border-color: #46576b;
+                border-left-color: #64a6ed;
+            }
+            QLabel#calendarDateTitle {
+                color: #9dcbff;
+            }
+            QLabel#calendarUndatedTitle {
+                color: #ffd181;
+            }
+            QLabel#calendarAssignmentTitle {
+                color: #f1f5fa;
+            }
+            QLabel#calendarCourseBadge {
+                color: #79b8ff;
             }
             QFrame#scheduleCard[cardVariant="alternate"] {
                 background: #221f2d;
@@ -917,14 +1036,16 @@ class SmartLearningWindow(QMainWindow):
     def _build_content_area(self) -> QTabWidget:
         self.tabs = QTabWidget()
 
-        #一共有3个tab
+        # Main content tabs.
         self.basic_tab = self._build_basic_tab()
         self.schedule_tab = self._build_schedule_tab()
         self.course_tab = self._build_course_tab()
+        self.assignment_calendar_tab = self._build_assignment_calendar_tab()
 
         self.tabs.addTab(self.basic_tab, "Basic Info")
         self.tabs.addTab(self.schedule_tab, "Schedule")
         self.tabs.addTab(self.course_tab, "Courses & Assignments")
+        self.tabs.addTab(self.assignment_calendar_tab, "Assignment Calendar")
         self.tabs.setCurrentIndex(1)
         return self.tabs
 
@@ -1026,6 +1147,61 @@ class SmartLearningWindow(QMainWindow):
 
         layout.addWidget(self.course_selector_group)
         layout.addWidget(self.course_detail_group, stretch=1)
+        return tab
+
+    def _build_assignment_calendar_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(12)
+
+        header = QFrame()
+        header.setObjectName("calendarHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(14, 10, 14, 10)
+        title = QLabel("Assignment Calendar")
+        title.setObjectName("sectionTitle")
+        self.assignment_calendar_summary = QLabel("No assignments loaded")
+        self.assignment_calendar_summary.setObjectName("mutedText")
+        self.assignment_course_filter = QComboBox()
+        self.assignment_course_filter.setMinimumWidth(240)
+        self.assignment_course_filter.addItem("All courses", "")
+        self.assignment_course_filter.currentIndexChanged.connect(self._render_assignment_calendar)
+        header_layout.addWidget(title)
+        header_layout.addWidget(self.assignment_calendar_summary)
+        header_layout.addStretch(1)
+        header_layout.addWidget(QLabel("Course"))
+        header_layout.addWidget(self.assignment_course_filter)
+        layout.addWidget(header)
+
+        body = QHBoxLayout()
+        body.setSpacing(14)
+
+        self.assignment_calendar = QCalendarWidget()
+        self.assignment_calendar.setObjectName("assignmentCalendar")
+        self.assignment_calendar.setGridVisible(True)
+        self.assignment_calendar.setVerticalHeaderFormat(CALENDAR_NO_VERTICAL_HEADER)
+        self.assignment_calendar.setMinimumWidth(430)
+        self.assignment_calendar.setMinimumHeight(400)
+        self.assignment_calendar.selectionChanged.connect(self._render_calendar_agenda)
+        body.addWidget(self.assignment_calendar, stretch=5)
+
+        agenda_group = QGroupBox("Daily Assignment View")
+        agenda_group.setMinimumWidth(390)
+        agenda_group_layout = QVBoxLayout(agenda_group)
+        self.assignment_agenda = QWidget()
+        self.assignment_agenda_layout = QVBoxLayout(self.assignment_agenda)
+        self.assignment_agenda_layout.setContentsMargins(2, 2, 6, 2)
+        self.assignment_agenda_layout.setSpacing(9)
+        agenda_scroll = QScrollArea()
+        agenda_scroll.setObjectName("assignmentAgendaScroll")
+        agenda_scroll.setWidgetResizable(True)
+        agenda_scroll.setFrameShape(NO_FRAME)
+        agenda_scroll.setWidget(self.assignment_agenda)
+        agenda_group_layout.addWidget(agenda_scroll)
+        body.addWidget(agenda_group, stretch=4)
+
+        layout.addLayout(body, stretch=1)
         return tab
 
     def _build_status_bar(self) -> QFrame:
@@ -1133,6 +1309,7 @@ class SmartLearningWindow(QMainWindow):
                 "• Refresh Both to update assignments and schedules together, or select one data type.\n"
                 "• Choose how many schedule days to retrieve before refreshing.\n"
                 "• Use the course selector and assignment filters to find specific results.\n"
+                "• Open Assignment Calendar to browse dated work by month and filter it by course.\n"
                 "• Auto login is optional. When enabled, anyone using this macOS account can open the cached information without entering the TigerNet password.\n"
                 "• Log out to lock the academic tabs and disable auto login.\n"
                 "• Delete Local Data requires the current password. The reset option is only for cases where that password is no longer available.",
@@ -1193,7 +1370,9 @@ class SmartLearningWindow(QMainWindow):
 
         self._render_profile(data)
         self._render_schedule(data.get("schedule_days", data.get("schedule", [])))
-        self._render_courses(data.get("courses", []))
+        courses = data.get("courses", [])
+        self._render_courses(courses)
+        self._load_assignment_calendar(courses)
 
     def set_status(self, message: str) -> None:
         self.status_label.setText(message)
@@ -1356,8 +1535,14 @@ class SmartLearningWindow(QMainWindow):
         self.setStyleSheet(stylesheet)
 
         tab_stylesheet = self._dark_theme_stylesheet() if enabled else ""
-        for tab in (self.basic_tab, self.schedule_tab, self.course_tab):
+        for tab in (
+            self.basic_tab,
+            self.schedule_tab,
+            self.course_tab,
+            self.assignment_calendar_tab,
+        ):
             tab.setStyleSheet(tab_stylesheet)
+        self._apply_assignment_calendar_markers()
 
     def _set_first_use_checkbox(self, enabled: bool) -> None:
         self.first_use_checkbox.blockSignals(True)
@@ -1515,6 +1700,7 @@ class SmartLearningWindow(QMainWindow):
         self._set_login_status(can_view_content)
         self.tabs.setTabEnabled(1, can_view_content)
         self.tabs.setTabEnabled(2, can_view_content)
+        self.tabs.setTabEnabled(3, can_view_content)
         self.logout_button.setEnabled(can_view_content)
         self.refresh_button.setEnabled(can_view_content)
         self.refresh_mode_selector.setEnabled(can_view_content)
@@ -1561,6 +1747,192 @@ class SmartLearningWindow(QMainWindow):
         self.course_selector.blockSignals(False)
         self.course_selector.setCurrentIndex(0)
         self._select_course(0)
+
+    def _load_assignment_calendar(self, courses: list[dict[str, Any]]) -> None:
+        self.assignment_calendar_items = []
+        course_names: list[str] = []
+        for course_index, course in enumerate(courses):
+            if not isinstance(course, dict):
+                continue
+            course_name = str(course.get("name", f"Course {course_index + 1}")).strip()
+            if course_name and course_name not in course_names:
+                course_names.append(course_name)
+            for assignment in course.get("assignments", []):
+                if not isinstance(assignment, dict):
+                    continue
+                self.assignment_calendar_items.append(
+                    {
+                        "course_name": course_name or f"Course {course_index + 1}",
+                        "assignment": assignment,
+                        "due_date": self._parse_assignment_date(assignment.get("due_date")),
+                    }
+                )
+
+        self.assignment_course_filter.blockSignals(True)
+        self.assignment_course_filter.clear()
+        self.assignment_course_filter.addItem("All courses", "")
+        for course_name in sorted(course_names, key=str.casefold):
+            self.assignment_course_filter.addItem(course_name, course_name)
+        self.assignment_course_filter.blockSignals(False)
+
+        dated_values = sorted(
+            item["due_date"]
+            for item in self.assignment_calendar_items
+            if item["due_date"] is not None
+        )
+        if dated_values:
+            today = date.today()
+            selected_date = next((due_date for due_date in dated_values if due_date >= today), dated_values[-1])
+            self.assignment_calendar.setSelectedDate(
+                QDate(selected_date.year, selected_date.month, selected_date.day)
+            )
+        self._render_assignment_calendar()
+
+    def _render_assignment_calendar(self, *_: Any) -> None:
+        visible_items = self._visible_calendar_items()
+        dated_count = sum(item["due_date"] is not None for item in visible_items)
+        undated_count = len(visible_items) - dated_count
+        self.assignment_calendar_summary.setText(
+            f"{len(visible_items)} assignment(s)  •  {dated_count} dated  •  "
+            f"{undated_count} without date"
+        )
+        self._apply_assignment_calendar_markers()
+        self._render_calendar_agenda()
+
+    def _visible_calendar_items(self) -> list[dict[str, Any]]:
+        selected_course = str(self.assignment_course_filter.currentData() or "")
+        return [
+            item
+            for item in self.assignment_calendar_items
+            if not selected_course or item["course_name"] == selected_course
+        ]
+
+    def _apply_assignment_calendar_markers(self) -> None:
+        if not hasattr(self, "assignment_calendar"):
+            return
+
+        for marked_date in self._calendar_marked_dates:
+            self.assignment_calendar.setDateTextFormat(
+                QDate(marked_date.year, marked_date.month, marked_date.day),
+                QTextCharFormat(),
+            )
+
+        self._calendar_marked_dates = {
+            item["due_date"]
+            for item in self._visible_calendar_items()
+            if item["due_date"] is not None
+        }
+        dark_mode = self.centralWidget().property("darkMode") == "true"
+        marker_format = QTextCharFormat()
+        marker_format.setBackground(QColor("#315f96" if dark_mode else "#dcecff"))
+        marker_format.setForeground(QColor("#ffffff" if dark_mode else "#123f75"))
+        marker_format.setFontWeight(700)
+        for marked_date in self._calendar_marked_dates:
+            self.assignment_calendar.setDateTextFormat(
+                QDate(marked_date.year, marked_date.month, marked_date.day),
+                marker_format,
+            )
+
+        weekday_format = QTextCharFormat()
+        weekday_format.setForeground(QColor("#e6edf3" if dark_mode else "#20242a"))
+        weekend_format = QTextCharFormat()
+        weekend_format.setForeground(QColor("#ff7b72" if dark_mode else "#c62828"))
+        for index, weekday in enumerate(WEEKDAY_VALUES):
+            self.assignment_calendar.setWeekdayTextFormat(
+                weekday,
+                weekend_format if index >= 5 else weekday_format,
+            )
+
+    def _render_calendar_agenda(self) -> None:
+        self._clear_layout(self.assignment_agenda_layout)
+        selected_qdate = self.assignment_calendar.selectedDate()
+        selected_date = date(selected_qdate.year(), selected_qdate.month(), selected_qdate.day())
+        visible_items = self._visible_calendar_items()
+        selected_items = [item for item in visible_items if item["due_date"] == selected_date]
+        undated_items = [item for item in visible_items if item["due_date"] is None]
+
+        selected_heading = QLabel(selected_date.strftime("%A, %B %d, %Y"))
+        selected_heading.setObjectName("calendarDateTitle")
+        self.assignment_agenda_layout.addWidget(selected_heading)
+        if selected_items:
+            for item in selected_items:
+                self.assignment_agenda_layout.addWidget(self._calendar_assignment_card(item))
+        else:
+            empty = QLabel("No assignments are scheduled for this date.")
+            empty.setObjectName("mutedText")
+            empty.setWordWrap(True)
+            self.assignment_agenda_layout.addWidget(empty)
+
+        if undated_items:
+            undated_heading = QLabel(f"Date not available  ·  {len(undated_items)}")
+            undated_heading.setObjectName("calendarUndatedTitle")
+            self.assignment_agenda_layout.addWidget(undated_heading)
+            note = QLabel("TigerNet did not provide a date for these assignments.")
+            note.setObjectName("mutedText")
+            note.setWordWrap(True)
+            self.assignment_agenda_layout.addWidget(note)
+            for item in undated_items:
+                self.assignment_agenda_layout.addWidget(self._calendar_assignment_card(item))
+
+        if not visible_items:
+            empty = QLabel("No assignment information is available. Refresh Assignments to load it.")
+            empty.setObjectName("mutedText")
+            empty.setWordWrap(True)
+            self.assignment_agenda_layout.addWidget(empty)
+        self.assignment_agenda_layout.addStretch(1)
+
+    def _calendar_assignment_card(self, item: dict[str, Any]) -> QFrame:
+        assignment = item["assignment"]
+        frame = QFrame()
+        frame.setObjectName("calendarAssignmentCard")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
+
+        name = QLabel(str(assignment.get("name", "Unnamed Assignment")))
+        name.setObjectName("calendarAssignmentTitle")
+        name.setWordWrap(True)
+        course = QLabel(str(item["course_name"]))
+        course.setObjectName("calendarCourseBadge")
+        course.setWordWrap(True)
+        details = [str(assignment.get("type", "Uncategorized"))]
+        grade = str(assignment.get("grade", "N/A"))
+        if grade:
+            details.append(f"Grade: {grade}")
+        meta = QLabel("  •  ".join(details))
+        meta.setObjectName("mutedText")
+        meta.setWordWrap(True)
+        layout.addWidget(name)
+        layout.addWidget(course)
+        layout.addWidget(meta)
+        return frame
+
+    def _parse_assignment_date(self, value: Any) -> date | None:
+        text = self._field_text(value)
+        if not text:
+            return None
+
+        normalized = re.sub(r"^(?:due|due date)\s*:?\s*", "", text, flags=re.IGNORECASE).strip()
+        try:
+            return datetime.fromisoformat(normalized.replace("Z", "+00:00")).date()
+        except ValueError:
+            pass
+
+        date_only = re.split(r"\s+(?:at\s+)?\d{1,2}:\d{2}", normalized, maxsplit=1)[0].strip()
+        for date_format in (
+            "%m/%d/%Y",
+            "%m/%d/%y",
+            "%Y/%m/%d",
+            "%b %d, %Y",
+            "%B %d, %Y",
+            "%d %b %Y",
+            "%d %B %Y",
+        ):
+            try:
+                return datetime.strptime(date_only, date_format).date()
+            except ValueError:
+                continue
+        return None
 
     def _select_course(self, index: int) -> None:
         if index < 0 or index >= len(self.current_courses):
@@ -1765,10 +2137,14 @@ class SmartLearningWindow(QMainWindow):
         assignment_type.setWordWrap(True)
         comment = QLabel(f"Comment: {assignment.get('comment', 'No comment')}")
         comment.setWordWrap(True)
+        due_date_text = self._field_text(assignment.get("due_date"))
+        due_date = QLabel(f"Date: {due_date_text or 'Not available'}")
+        due_date.setObjectName("mutedText")
 
         layout.addWidget(name, 0, 0)
         layout.addWidget(grade, 0, 1)
         layout.addWidget(assignment_type, 1, 1)
+        layout.addWidget(due_date, 1, 0)
         layout.addWidget(comment, 2, 0, 1, 2)
         layout.setColumnStretch(0, 1)
         return frame
@@ -1997,6 +2373,7 @@ class SmartLearningWindow(QMainWindow):
             item = layout.takeAt(0)
             child = item.widget()
             if child is not None:
+                child.setParent(None)
                 child.deleteLater()
 
 

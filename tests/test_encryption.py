@@ -43,6 +43,24 @@ class EncryptionServiceTests(unittest.TestCase):
             set_password.assert_not_called()
             self.assertEqual(service.decrypt_to_dict(service.encrypt_dict({"value": 2})), {"value": 2})
 
+    def test_reuses_key_in_process_without_reopening_keychain(self) -> None:
+        key = Fernet.generate_key()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            key_path = Path(temp_dir) / ".sl_key"
+            with patch(
+                "Backend.Encryption.keyring.get_password",
+                return_value=key.decode("ascii"),
+            ) as get_password:
+                first_service = EncryptionService(key_path)
+                second_service = EncryptionService(key_path)
+
+            get_password.assert_called_once_with(
+                "com.smartlearning.app",
+                "storage-fernet-key-v1",
+            )
+            encrypted = first_service.encrypt_dict({"cached": True})
+            self.assertEqual(second_service.decrypt_to_dict(encrypted), {"cached": True})
+
     def test_preserves_conflicting_legacy_key(self) -> None:
         keychain_key = Fernet.generate_key()
         legacy_key = Fernet.generate_key()

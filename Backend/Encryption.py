@@ -14,6 +14,7 @@ from keyring.errors import KeyringError
 
 KEYRING_SERVICE = "com.smartlearning.app"
 KEYRING_ACCOUNT = "storage-fernet-key-v1"
+_PROCESS_KEY_CACHE: dict[tuple[str, str, str], bytes] = {}
 
 
 class EncryptionService:
@@ -47,9 +48,15 @@ class EncryptionService:
         return data
 
     def _load_or_create_key(self) -> bytes:
+        cache_key = self._cache_key()
+        cached_key = _PROCESS_KEY_CACHE.get(cache_key)
+        if cached_key is not None:
+            return cached_key
+
         keychain_key = self._read_keychain_key()
         if keychain_key is not None:
             self._remove_matching_legacy_key(keychain_key)
+            _PROCESS_KEY_CACHE[cache_key] = keychain_key
             return keychain_key
 
         legacy_key = self._read_legacy_key()
@@ -64,7 +71,12 @@ class EncryptionService:
         if legacy_key is not None:
             self._remove_matching_legacy_key(verified_key)
 
+        _PROCESS_KEY_CACHE[cache_key] = verified_key
         return verified_key
+
+    def _cache_key(self) -> tuple[str, str, str]:
+        normalized_path = str(self.key_path.expanduser().resolve(strict=False))
+        return self.keyring_service, self.keyring_account, normalized_path
 
     def _read_keychain_key(self) -> bytes | None:
         try:

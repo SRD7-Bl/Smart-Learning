@@ -12,7 +12,7 @@ from Backend.Data_Access import DataAccessModule
 from Frontend.App_Window import SmartLearningWindow
 from Frontend.Input_Module import UserInputModule
 from Frontend.Request_Module import RequestSendingModule
-from Frontend.qt_compat import QApplication, QLabel
+from Frontend.qt_compat import QApplication, QLabel, QDate
 
 
 def test_account_button_and_password_prompt_follow_configuration_state(tmp_path) -> None:
@@ -22,6 +22,8 @@ def test_account_button_and_password_prompt_follow_configuration_state(tmp_path)
     with patch("Backend.Encryption.keyring.get_password", return_value=key):
         data_access = DataAccessModule(storage_dir=tmp_path)
         controller = ApplicationController(data_access_module=data_access)
+        assert controller.authentication_module.data_access_module is data_access
+        assert controller.processor_module.data_access_module is data_access
         request_module = RequestSendingModule(application_controller=controller)
         input_module = UserInputModule(
             settings_path=data_access.user_settings_path,
@@ -32,6 +34,7 @@ def test_account_button_and_password_prompt_follow_configuration_state(tmp_path)
             request_module=request_module,
             data_access_module=data_access,
         )
+        assert window.data_access_module is controller.data_access_module
 
         assert window.update_auth_button.text() == "Create a New Account"
         assert window.update_auth_button.objectName() == "accountButton"
@@ -45,6 +48,9 @@ def test_account_button_and_password_prompt_follow_configuration_state(tmp_path)
         assert window.onboarding_step == 1
         assert window.onboarding_panel.isHidden() is False
         assert window.first_use_checkbox.isEnabled() is True
+        assert window.tabs.count() == 4
+        assert window.tabs.tabText(3) == "Assignment Calendar"
+        assert window.tabs.isTabEnabled(3) is False
 
         window.theme_toggle.setChecked(True)
         assert input_module.dark_mode_enabled is True
@@ -71,6 +77,7 @@ def test_account_button_and_password_prompt_follow_configuration_state(tmp_path)
 
         window._set_content_access(True)
         assert window.login_state_label.text() == "● Logged In"
+        assert window.tabs.isTabEnabled(3) is True
 
         window._set_content_access(False)
         assert window.login_state_label.text() == "● Not Logged In"
@@ -152,6 +159,38 @@ def test_account_button_and_password_prompt_follow_configuration_state(tmp_path)
             "Sep 25, 2026  •  Block 5",
             "Sep 25, 2026  •  Block 6",
         ]
+
+        window._load_assignment_calendar(
+            [
+                {
+                    "name": "Chemistry",
+                    "assignments": [
+                        {
+                            "name": "Lab Report",
+                            "type": "Criteria B",
+                            "grade": "--/8",
+                            "due_date": "09/28/2026",
+                        },
+                        {
+                            "name": "Reflection",
+                            "type": "Criteria D",
+                            "grade": "7/8",
+                            "due_date": "",
+                        },
+                    ],
+                }
+            ]
+        )
+        assert window.assignment_calendar_summary.text() == (
+            "2 assignment(s)  •  1 dated  •  1 without date"
+        )
+        assert window._parse_assignment_date("Sep 28, 2026").isoformat() == "2026-09-28"
+        window.assignment_calendar.setSelectedDate(QDate(2026, 9, 28))
+        window._render_calendar_agenda()
+        agenda_labels = [label.text() for label in window.assignment_agenda.findChildren(QLabel)]
+        assert "Lab Report" in agenda_labels
+        assert "Reflection" in agenda_labels
+        assert "Date not available  ·  1" in agenda_labels
 
         window.close()
         app.processEvents()

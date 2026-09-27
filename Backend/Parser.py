@@ -149,6 +149,7 @@ class ParserModule(QObject):
             "max_score": max_score,
             "grade_status": grade_status,
             "comment": self._clean_text(raw_assignment.get("comment", "")),
+            "due_date": self._clean_text(raw_assignment.get("due_date", "")),
             "excluded_from_cumulative_grade": excluded,
         }
 

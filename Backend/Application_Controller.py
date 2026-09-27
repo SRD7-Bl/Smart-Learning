@@ -38,7 +38,10 @@ class ApplicationController(QObject):
         )
         self.acquisition_module = acquisition_module or InformationAcquisitionModule(self)
         self.parser_module = parser_module or ParserModule(self)
-        self.processor_module = processor_module or DataProcessingModule(self)
+        self.processor_module = processor_module or DataProcessingModule(
+            self,
+            data_access_module=self.data_access_module,
+        )
         self.error_handler = error_handler or ErrorHandlingModule(self)
         self._pending_login_credentials: tuple[str, str] | None = None
         self._pending_refresh_mode = "both" """默认是both，也就是assignment + Schedule"""

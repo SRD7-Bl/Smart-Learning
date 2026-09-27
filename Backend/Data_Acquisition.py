@@ -57,6 +57,15 @@ class CourseAcquisitionLocators:
     assignment_name_cell_selector: str = 'div[col-id="AssignmentShortDescription"]'
     assignment_points_cell_selector: str = 'div[col-id="Points"]'
     assignment_comment_cell_selector: str = 'div[col-id="Comment"]'
+    assignment_due_date_selectors: tuple[str, ...] = (
+        'div[col-id="DueDate"]',
+        'div[col-id="DateDue"]',
+        'div[col-id="AssignmentDueDate"]',
+        'div[col-id="Due"]',
+        'div[col-id="AssignmentDate"]',
+        'div[col-id="DateAssigned"]',
+        'div[col-id="Date"]',
+    )
     modal_close_button_selector: str = "div.sky-modal-footer-container button"
 
 
@@ -471,6 +480,10 @@ class InformationAcquisitionModule(QObject):
                     "grade": self._visible_text_from_selector(row, self.locators.assignment_points_cell_selector),
                     "type": assignment_type,
                     "comment": self._visible_text_from_selector(row, self.locators.assignment_comment_cell_selector),
+                    "due_date": self._first_visible_text_from_selectors(
+                        row,
+                        self.locators.assignment_due_date_selectors,
+                    ),
                 }
             )
 
@@ -585,6 +598,13 @@ class InformationAcquisitionModule(QObject):
             return ""
 
         return (element.text or element.get_attribute("textContent") or "").strip()
+
+    def _first_visible_text_from_selectors(self, row: WebElement, selectors: tuple[str, ...]) -> str:
+        for selector in selectors:
+            text = self._visible_text_from_selector(row, selector)
+            if text:
+                return text
+        return ""
 
     def _text_from_optional_element(self, element: WebElement | None) -> str:
         if element is None:

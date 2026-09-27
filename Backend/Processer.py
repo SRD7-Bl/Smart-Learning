@@ -23,7 +23,6 @@ class DataProcessingModule(QObject):
     ) -> None:
         super().__init__(parent)
         self.data_access_module = data_access_module or DataAccessModule(self)
-        self.data_access_module.academic_info_loaded.connect(self.processing_succeeded.emit)
         self.data_access_module.academic_info_saved.connect(self._reload_saved_academic_info)
         self.data_access_module.data_access_failed.connect(self.processing_failed.emit)
 
@@ -43,7 +42,13 @@ class DataProcessingModule(QObject):
 
     def _reload_saved_academic_info(self) -> None:
         self.processing_status.emit("Academic info saved. Reloading latest local data.")
-        self.data_access_module.request_academic_info()
+        try:
+            academic_info = self.data_access_module.load_academic_info_snapshot()
+        except ValueError as error:
+            self.processing_failed.emit(str(error))
+            return
+
+        self.processing_succeeded.emit(academic_info)
 
     def _build_frontend_academic_info(self, parsed_academic_info: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(parsed_academic_info, dict):
@@ -121,6 +126,7 @@ class DataProcessingModule(QObject):
                 "max_score": raw_assignment.get("max_score"),
                 "grade_status": self._clean_text(raw_assignment.get("grade_status")) or "unknown",
                 "comment": self._clean_text(raw_assignment.get("comment")),
+                "due_date": self._clean_text(raw_assignment.get("due_date")),
                 "excluded_from_cumulative_grade": bool(raw_assignment.get("excluded_from_cumulative_grade", False)),
             }
             assignments.append(assignment)
